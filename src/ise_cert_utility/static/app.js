@@ -46,13 +46,13 @@ async function withBusy(button, task) {
 const CONFIRM = {
   renew: {
     title: 'Renew and deploy',
-    text: 'If a new certificate is installed with the Admin role, ISE restarts its application services. The admin GUI and portals are unavailable for several minutes.',
+    text: 'If a new certificate is installed with the Admin role, each node restarts its application services and is unavailable for several minutes. Nodes are updated one at a time, with the Primary Admin Node last.',
     accept: 'Renew and deploy',
     force: true,
   },
   deploy: {
     title: 'Deploy current certificate',
-    text: 'If ISE is not already serving this certificate it will be imported now. With the Admin role, ISE restarts its application services.',
+    text: 'Nodes not already serving this certificate receive it now, one at a time. With the Admin role, each updated node restarts its application services.',
     accept: 'Deploy',
   },
 };
@@ -213,18 +213,75 @@ function renderCertificate(cert, renewDays) {
   });
 }
 
+function nodeCurrent(node, cert) {
+  return !node.error && (node.deployed || (cert.present && node.admin_fingerprint === cert.fingerprint));
+}
+
 function renderIse(ise, cert) {
   if (!ise.checked_at) {
     setText('ise-state', 'Not checked');
     setText('ise-meta', 'Run Check ISE to read the current state');
     setTone('ise-state', null);
+    renderNodes([], cert);
     return;
   }
-  const current = cert.present && ise.admin_fingerprint === cert.fingerprint;
-  const deployed = ise.deployed || current;
-  setText('ise-state', deployed ? 'Serving current' : 'Out of date');
-  setTone('ise-state', deployed ? 'ok' : 'warn');
-  setText('ise-meta', `Node ${ise.node} · checked ${ago(ise.checked_at)}`);
+  const nodes = ise.nodes || [{ name: ise.node, deployed: ise.deployed, admin_fingerprint: ise.admin_fingerprint }];
+  const serving = nodes.filter((node) => nodeCurrent(node, cert)).length;
+  const failed = nodes.some((node) => node.error);
+  if (nodes.length > 1) {
+    setText('ise-state', serving === nodes.length ? 'Serving current' : `${serving} of ${nodes.length} current`);
+    setTone('ise-state', serving === nodes.length ? 'ok' : failed ? 'bad' : 'warn');
+    setText('ise-meta', `${nodes.length} nodes · checked ${ago(ise.checked_at)}`);
+  } else {
+    const deployed = serving === 1;
+    setText('ise-state', failed ? 'Check failed' : deployed ? 'Serving current' : 'Out of date');
+    setTone('ise-state', failed ? 'bad' : deployed ? 'ok' : 'warn');
+    setText('ise-meta', `Node ${nodes[0].name} · checked ${ago(ise.checked_at)}`);
+  }
+  renderNodes(nodes, cert);
+}
+
+const ROLE_LABELS = { PrimaryAdmin: 'Primary admin', SecondaryAdmin: 'Secondary admin',
+  PrimaryMonitoring: 'Primary monitoring', SecondaryMonitoring: 'Secondary monitoring' };
+
+function nodeRole(node) {
+  const roles = (node.roles || []).map((role) => ROLE_LABELS[role]).filter(Boolean);
+  if ((node.services || []).includes('Session')) roles.push('Policy service');
+  return roles.join(', ');
+}
+
+function renderNodes(nodes, cert) {
+  bound('nodes-panel').forEach((panel) => { panel.hidden = nodes.length < 2; });
+  bound('nodes').forEach((tbody) => {
+    tbody.replaceChildren();
+    for (const node of nodes) {
+      const row = tbody.insertRow();
+      const name = row.insertCell();
+      name.textContent = node.name;
+      if (node.host) {
+        const sub = document.createElement('span');
+        sub.className = 'cell-sub';
+        sub.textContent = node.host;
+        name.append(sub);
+      }
+      const state = document.createElement('span');
+      const current = nodeCurrent(node, cert);
+      state.className = `status status-${node.error ? 'failed' : current ? 'succeeded' : 'warning'}`;
+      state.textContent = node.error ? 'Check failed' : current ? 'Current' : 'Out of date';
+      const cell = row.insertCell();
+      cell.append(state);
+      if (node.error) {
+        const sub = document.createElement('span');
+        sub.className = 'cell-sub';
+        sub.textContent = node.error;
+        cell.append(sub);
+      }
+      row.insertCell().textContent = nodeRole(node);
+      const when = row.insertCell();
+      when.className = 'nowrap';
+      when.textContent = node.checked_at ? ago(node.checked_at) : '';
+    }
+  });
 }
 
 function renderSchedule(schedule) {
@@ -316,7 +373,10 @@ async function refresh() {
     renderSchedule(data.schedule);
     renderHistory(data.history || []);
     busy = renderJob(data.job || {}, data.log || '');
-    bound('pending').forEach((el) => { el.hidden = !(data.pending && data.pending.fingerprint); });
+    const pending = data.pending || {};
+    bound('pending').forEach((el) => {
+      el.hidden = !(pending.fingerprint || Object.keys(pending.nodes || {}).length);
+    });
   } catch {
     setStatus('job-state', null);
     setText('job-state', 'Status unavailable');

@@ -117,3 +117,19 @@ def test_intermediates_listed_with_ise_trust(client):
     response = client.post("/download/ca-yr2", data={"csrf": token}, base_url="https://localhost")
     assert response.status_code == 200 and b"BEGIN CERTIFICATE" in response.data
     assert client.post("/download/ca-zz9", data={"csrf": token}, base_url="https://localhost").status_code == 404
+
+
+def test_ise_settings_save_node_list(client):
+    login(client)
+    token = csrf(client, "/settings")
+    response = client.post("/api/settings/ise", base_url="https://localhost", headers={"X-CSRF-Token": token},
+                           data={"node_mode": "list", "nodes": "pan-01\npsn-01 psn-01.example.net",
+                                 "username": "api", "ise_port": "443", "verify_minutes": "30",
+                                 "deploy_admin": "on", "portal_tag": "x",
+                                 "eap_fingerprints": "a" * 64 + "\n" + "b" * 64})
+    assert response.status_code == 200, response.get_json()
+    cfg = config.load()
+    assert [n["name"] for n in cfg["nodes"]] == ["pan-01", "psn-01"] and len(cfg["eap_fingerprints"]) == 2
+    body = client.get("/settings", base_url="https://localhost").get_data(as_text=True)
+    assert "psn-01 psn-01.example.net" in body and "b" * 64 in body
+    assert "2 ISE nodes" in client.get("/", base_url="https://localhost").get_data(as_text=True)

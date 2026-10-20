@@ -75,7 +75,8 @@ def create_app():
         return session["csrf"]
 
     app.jinja_env.globals.update(csrf=csrf_token, version=__version__, nav=NAV, weekdays=config.WEEKDAYS,
-                                 key_types=config.KEY_TYPES)
+                                 key_types=config.KEY_TYPES,
+                                 node_names=lambda cfg: [n["name"] for n in config.node_list(cfg)])
 
     @app.template_filter("when")
     def when(ts):
@@ -193,7 +194,9 @@ def create_app():
             trusted = [certs.describe(c) for c in certs.load_pems(paths.ISE_CA.read_bytes())]
         except (OSError, ValueError):
             trusted = []
-        return page("settings.html", ise_ca=trusted)
+        cfg = config.load()
+        return page("settings.html", ise_ca=trusted, node_list=config.node_list(cfg),
+                    eap_pins=sorted(config.eap_pins(cfg)))
 
     @app.get("/account")
     def account():

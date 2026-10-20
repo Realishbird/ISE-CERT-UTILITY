@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
-{% block lede %}Certificate lifecycle for {{ cfg.node or 'your ISE node' }}{% if cfg.domain %} at {{ cfg.domain }}{% endif %}{% if cfg.domain and cfg.extra_names %}, also covering
+{% block lede %}{% set nodes = node_names(cfg) %}Certificate lifecycle for {% if cfg.node_mode == 'all' %}every node in the ISE deployment{% elif nodes | length > 1 %}{{ nodes | length }} ISE nodes{% else %}{{ nodes[0] if nodes else 'your ISE node' }}{% endif %}{% if cfg.domain %} at {{ cfg.domain }}{% endif %}{% if cfg.domain and cfg.extra_names %}, also covering
 {%- if cfg.extra_names | length <= 3 %} {{ cfg.extra_names | join(', ') }}{% else %} {{ cfg.extra_names[:2] | join(', ') }} and <a href="{{ url_for('certificate') }}">{{ cfg.extra_names | length - 2 }} more names</a>{% endif %}{% endif %}.{% endblock %}
 {% block content %}
 <div data-poll>
@@ -22,6 +22,17 @@
     <span class="summary-value" data-bind="sched-state">–</span>
     <span class="summary-meta" data-bind="sched-meta">Loading</span>
   </div>
+</section>
+
+<section class="panel" aria-labelledby="nodes-heading" data-bind="nodes-panel" hidden>
+  <div class="panel-header">
+    <h2 id="nodes-heading">ISE nodes</h2>
+    <span class="panel-meta">Updated in this order</span>
+  </div>
+  <table class="table">
+    <thead><tr><th>Node</th><th>Certificate</th><th>Role</th><th>Checked</th></tr></thead>
+    <tbody data-bind="nodes"></tbody>
+  </table>
 </section>
 
 <div class="grid-2">

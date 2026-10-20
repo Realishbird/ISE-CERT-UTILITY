@@ -26,8 +26,34 @@ def test_ise_requires_a_role():
     clean, secret, ca = config.validate_ise({**form, "deploy_admin": "on", "ise_password": "pw",
                                              "eap_fingerprint": "AA:" * 31 + "AA"})
     assert clean["deploy_admin"] and not clean["deploy_portal"]
-    assert clean["eap_fingerprint"] == "aa" * 32
+    assert clean["eap_fingerprints"] == ["aa" * 32] and clean["eap_fingerprint"] == ""
+    assert clean["nodes"] == [{"name": "ise-01", "host": ""}] and clean["node"] == "ise-01"
     assert secret == {"ise_password": "pw"}
+
+
+def test_node_list_parsing():
+    base = {"username": "api", "ise_port": "443", "verify_minutes": "30", "portal_tag": "x", "deploy_admin": "on"}
+    clean, _, _ = config.validate_ise({**base, "nodes": "pan-01\npsn-01 PSN-01.Example.NET\n\n"})
+    assert clean["nodes"] == [{"name": "pan-01", "host": ""}, {"name": "psn-01", "host": "psn-01.example.net"}]
+    with pytest.raises(ValueError, match="more than once"):
+        config.validate_ise({**base, "nodes": "pan-01\nPAN-01"})
+    with pytest.raises(ValueError, match="at least one"):
+        config.validate_ise({**base, "nodes": ""})
+    clean, _, _ = config.validate_ise({**base, "nodes": "", "node_mode": "all"})
+    assert clean["node_mode"] == "all" and clean["nodes"] == []
+    assert "ISE node name" not in config.missing({**config.DEFAULTS, **clean}, {})
+
+
+def test_legacy_single_node_settings_still_apply():
+    cfg = {**config.DEFAULTS, "node": "ISE-01", "eap_fingerprint": "a" * 64}
+    assert config.node_list(cfg) == [{"name": "ISE-01", "host": ""}]
+    assert config.eap_pins(cfg) == {"a" * 64}
+
+
+def test_wildcard_coverage():
+    assert config.covers(["ise.example.net", "*.nodes.example.net"], "psn-01.nodes.example.net")
+    assert not config.covers(["*.nodes.example.net"], "a.b.nodes.example.net")
+    assert not config.covers(["ise.example.net"], "psn-01.example.net")
 
 
 def test_schedule_weekdays_from_multidict():

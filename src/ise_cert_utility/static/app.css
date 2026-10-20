@@ -96,6 +96,7 @@ code { background: var(--surface-sunken); border: 1px solid var(--border); borde
 .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .panel-sub { color: var(--muted); margin-top: 2px; font-size: 13px; max-width: 70ch; }
 .panel-link { font-size: 13px; }
+.panel-meta { font-size: 13px; color: var(--muted); }
 .panel > .details, .panel > form, .panel > .file-list { padding: 4px 18px 16px; }
 .panel > form.form-row { padding: 16px 18px; }
 .panel > .banner { margin: 0 18px 16px; }

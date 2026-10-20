@@ -30,14 +30,14 @@ The container needs outbound HTTPS (TCP 443) to:
 
 - `acme-v02.api.letsencrypt.org` and `acme-staging-v02.api.letsencrypt.org`
 - `api.cloudflare.com`
-- the ISE Primary Admin Node
+- the ISE Primary Admin Node, and every other node that receives the certificate
 - your Python package index during installation and upgrades
 
 ## 2. Prepare ISE
 
 1. Enable the API: **Administration > System > Settings > API Settings > API Service Settings**, enable **Open API (Read/Write)**.
 2. Create an administrator for the utility: **Administration > System > Admin Access > Administrators > Admin Users**. Assign the **ERS Admin** group, or **Super Admin** if your policy requires it for certificate operations. Use a long random password.
-3. Note the node name exactly as shown under **Administration > System > Deployment**. This is the value for **Node name** in the console.
+3. Note the node names exactly as shown under **Administration > System > Deployment**. These go under **Nodes** in the console. To update every node, choose **Every node in the deployment** instead; see [Multiple ISE nodes](configuration.md#multiple-ise-nodes).
 
 If ISE currently presents a self-signed or private-CA admin certificate, export the issuing CA certificate (for a self-signed certificate, the certificate itself) in PEM format. You will paste it under **Settings > ISE connection > Advanced** so the utility can verify the API connection. After the first deployment ISE presents a Let's Encrypt certificate and this is no longer needed.
 

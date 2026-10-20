@@ -20,6 +20,8 @@ KEY_TYPES = {
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 NOTIFY_LEVELS = ("never", "failure", "always")
 MAX_NAMES = 100  # Let's Encrypt limit per certificate, including the primary hostname
+MAX_NODES = 50  # ISE's deployment limit
+NODE_MODES = ("list", "all")
 
 DEFAULTS = {
     # Certificate
@@ -32,12 +34,15 @@ DEFAULTS = {
     # ISE
     "ise_host": "",
     "ise_port": 443,
-    "node": "",
+    "node": "",  # single-node setting from 2.0; superseded by "nodes"
+    "node_mode": "list",
+    "nodes": [],
     "username": "",
     "deploy_admin": True,
     "deploy_portal": True,
     "portal_tag": "Default Portal Certificate Group",
-    "eap_fingerprint": "",
+    "eap_fingerprint": "",  # single pin from 2.0; superseded by "eap_fingerprints"
+    "eap_fingerprints": [],
     "verify_minutes": 30,
     "remove_superseded": False,
     # Schedule
@@ -96,6 +101,24 @@ def ise_host(cfg):
     return cfg.get("ise_host") or cfg.get("domain")
 
 
+def node_list(cfg):
+    """Configured nodes as [{"name", "host"}]; host is blank unless set explicitly."""
+    if cfg.get("nodes"):
+        return [dict(n) for n in cfg["nodes"]]
+    return [{"name": cfg["node"], "host": ""}] if cfg.get("node") else []
+
+
+def eap_pins(cfg):
+    return set(cfg.get("eap_fingerprints") or []) | ({cfg["eap_fingerprint"]} if cfg.get("eap_fingerprint") else set())
+
+
+def covers(names, host):
+    """Whether a certificate with these DNS names is valid for host."""
+    host = host.lower()
+    return any(n == host or (n.startswith("*.") and "." in host and host.split(".", 1)[1] == n[2:])
+               for n in names)
+
+
 def missing(cfg=None, secret=None):
     """Return human-readable names of settings required before automation can run."""
     cfg = cfg or load()
@@ -103,10 +126,11 @@ def missing(cfg=None, secret=None):
     required = [
         ("domain", "Certificate hostname"),
         ("acme_email", "ACME account email"),
-        ("node", "ISE node name"),
         ("username", "ISE API username"),
     ]
     out = [label for key, label in required if not cfg.get(key)]
+    if cfg.get("node_mode") != "all" and not node_list(cfg):
+        out.insert(2, "ISE node name")
     if not secret.get("ise_password"):
         out.append("ISE API password")
     if not secret.get("cloudflare_token"):
@@ -179,6 +203,35 @@ def fingerprint(value):
     return value
 
 
+def fingerprints(value):
+    """Parse SHA-256 fingerprints, one per line or separated by commas."""
+    raw = value if isinstance(value, list) else re.split(r"[\n,]+", value or "")
+    out = []
+    for item in filter(None, (fingerprint(i) for i in raw)):
+        if item not in out:
+            out.append(item)
+    return out
+
+
+def nodes(value):
+    """Parse node lines of the form "name" or "name api-host"."""
+    out = []
+    for line in filter(None, (line.strip() for line in (value or "").splitlines())):
+        parts = line.replace(",", " ").split()
+        if len(parts) > 2:
+            raise ValueError(f"Node line {line[:64]!r} should be a node name, optionally followed by its API host.")
+        name = parts[0]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,63}", name):
+            raise ValueError("ISE node names may contain letters, digits, dots, hyphens and underscores.")
+        if name.lower() in {n["name"].lower() for n in out}:
+            raise ValueError(f"Node {name} is listed more than once.")
+        host = hostname(parts[1], f"API host for {name}") if len(parts) == 2 else ""
+        out.append({"name": name, "host": host})
+    if len(out) > MAX_NODES:
+        raise ValueError(f"List at most {MAX_NODES} nodes.")
+    return out
+
+
 def validate_certificate(form):
     email = _text(form, "acme_email", 254, label="ACME account email")
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
@@ -203,21 +256,27 @@ def validate_certificate(form):
 
 def validate_ise(form):
     host = (form.get("ise_host") or "").strip()
-    node = _text(form, "node", 63, label="ISE node name")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,63}", node):
-        raise ValueError("ISE node name may contain letters, digits, dots, hyphens and underscores.")
+    mode = form.get("node_mode") or "list"
+    if mode not in NODE_MODES:
+        raise ValueError("Choose which ISE nodes to update.")
+    node_rows = nodes(form.get("nodes", form.get("node", "")))
+    if mode == "list" and not node_rows:
+        raise ValueError("List at least one ISE node, or choose all nodes in the deployment.")
     username = _text(form, "username", 128, label="API username")
     if ":" in username:
         raise ValueError("API username cannot contain a colon.")
     clean = {
         "ise_host": hostname(host, "ISE API host") if host else "",
         "ise_port": _int(form, "ise_port", 1, 65535, "ISE API port"),
-        "node": node,
+        "node_mode": mode,
+        "nodes": node_rows,
+        "node": node_rows[0]["name"] if node_rows else "",
         "username": username,
         "deploy_admin": _flag(form, "deploy_admin"),
         "deploy_portal": _flag(form, "deploy_portal"),
         "portal_tag": _text(form, "portal_tag", 128, required=_flag(form, "deploy_portal"), label="Portal group tag"),
-        "eap_fingerprint": fingerprint(form.get("eap_fingerprint", "")),
+        "eap_fingerprint": "",
+        "eap_fingerprints": fingerprints(form.get("eap_fingerprints", form.get("eap_fingerprint", ""))),
         "verify_minutes": _int(form, "verify_minutes", 5, 90, "Verification timeout"),
         "remove_superseded": _flag(form, "remove_superseded"),
     }
