@@ -180,7 +180,12 @@ def create_app():
     @app.get("/certificate")
     def certificate():
         cfg = config.load()
-        return page("certificate.html", cert=certs.info(cfg["domain"]), names=config.cert_names(cfg))
+        state = store.read_json(paths.ISE_STATE)
+        trusted = set(state.get("trusted_fingerprints", []))
+        intermediates = [{**i, "trusted": (i["fingerprint"] in trusted) if "trusted_fingerprints" in state else None}
+                         for i in certs.letsencrypt_intermediates(config.KEY_TYPES[cfg["key_type"]][0])]
+        return page("certificate.html", cert=certs.info(cfg["domain"]), names=config.cert_names(cfg),
+                    intermediates=intermediates)
 
     @app.get("/settings")
     def settings():
@@ -352,6 +357,12 @@ def create_app():
                              mimetype="application/x-pem-file")
         if kind == "console":
             return send_file(paths.TLS_CERT, as_attachment=True, download_name="console.crt")
+        if kind.startswith("ca-"):
+            name = kind[3:].upper()
+            if name not in {n for n, _, _ in certs.LETS_ENCRYPT_INTERMEDIATES}:
+                abort(404)
+            return send_file(io.BytesIO(certs.intermediate_pem(name)), as_attachment=True,
+                             download_name=f"letsencrypt-{name.lower()}.pem", mimetype="application/x-pem-file")
         if kind not in ("pfx", "key"):
             abort(404)
         try:

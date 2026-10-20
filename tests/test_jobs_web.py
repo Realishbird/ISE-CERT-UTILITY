@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from ise_cert_utility import acme, config, jobs, paths, store, web
+from ise_cert_utility import acme, certs, config, jobs, paths, store, web
 
 
 def test_log_scrubs_secrets_and_keys(configured):
@@ -104,3 +104,16 @@ def test_lockout_after_failures(client):
     response = client.post("/login", data={"csrf": token, "username": "admin", "password": "correct horse battery"},
                            base_url="https://localhost")
     assert response.status_code == 429
+
+
+def test_intermediates_listed_with_ise_trust(client):
+    yr1 = certs.letsencrypt_intermediates("rsa")[0]
+    store.write_json(paths.ISE_STATE, {"checked_at": 1, "trusted_fingerprints": [yr1["fingerprint"]]})
+    login(client)
+    body = client.get("/certificate", base_url="https://localhost").get_data(as_text=True)
+    assert "YR1" in body and "YR3" in body and "YE1" not in body
+    assert body.count("Not trusted by ISE") == 2 and "Trusted by ISE" in body
+    token = csrf(client, "/certificate")
+    response = client.post("/download/ca-yr2", data={"csrf": token}, base_url="https://localhost")
+    assert response.status_code == 200 and b"BEGIN CERTIFICATE" in response.data
+    assert client.post("/download/ca-zz9", data={"csrf": token}, base_url="https://localhost").status_code == 404

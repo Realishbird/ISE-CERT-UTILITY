@@ -2,6 +2,7 @@
 import hashlib
 import re
 from datetime import UTC, datetime, timedelta
+from importlib import resources
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -12,6 +13,13 @@ from cryptography.x509.verification import PolicyBuilder, Store, VerificationErr
 from . import paths
 
 PEM_CERT = re.compile(rb"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----", re.S)
+
+# Let's Encrypt's Generation Y intermediates (https://letsencrypt.org/certificates/), bundled in cas/. Either active
+# intermediate can sign any renewal, so ISE has to trust all of them; the backup can be trusted in advance.
+LETS_ENCRYPT_INTERMEDIATES = (
+    ("YR1", "rsa", "active"), ("YR2", "rsa", "active"), ("YR3", "rsa", "backup"),
+    ("YE1", "ecdsa", "active"), ("YE2", "ecdsa", "active"), ("YE3", "ecdsa", "backup"),
+)
 
 
 def fingerprint(cert):
@@ -24,6 +32,16 @@ def clean_fingerprint(value):
 
 def load_pems(data):
     return [x509.load_pem_x509_certificate(block) for block in PEM_CERT.findall(data)]
+
+
+def intermediate_pem(name):
+    return resources.files(__package__).joinpath("cas", f"int-{name.lower()}.pem").read_bytes()
+
+
+def letsencrypt_intermediates(family):
+    """The bundled Let's Encrypt intermediates that can sign certificates with a key of this family."""
+    return [{"name": name, "status": status, "fingerprint": fingerprint(load_pems(intermediate_pem(name))[0])}
+            for name, fam, status in LETS_ENCRYPT_INTERMEDIATES if fam == family]
 
 
 def to_pem(cert):

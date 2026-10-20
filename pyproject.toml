@@ -30,7 +30,7 @@ version = { attr = "ise_cert_utility.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-ise_cert_utility = ["templates/*.html", "static/*"]
+ise_cert_utility = ["templates/*.html", "static/*", "cas/*.pem"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

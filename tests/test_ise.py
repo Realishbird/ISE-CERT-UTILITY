@@ -170,3 +170,19 @@ def test_superseded_cleanup_only_removes_own_unused(configured):
     names = {r["friendlyName"] for r in client.system}
     assert "ise-cert-utility 0123456789abcdef" not in names
     assert "Default self-signed" in names and "EAP" in names
+
+
+def test_bundled_intermediates_match_known_fingerprints():
+    rsa = {i["name"]: i for i in certs.letsencrypt_intermediates("rsa")}
+    assert [n for n, i in rsa.items() if i["status"] == "active"] == ["YR1", "YR2"]
+    assert rsa["YR1"]["fingerprint"].startswith("13949634d99cd6fd")
+    assert rsa["YR2"]["fingerprint"].startswith("238b85a0099c65b9")
+    assert len(certs.letsencrypt_intermediates("ecdsa")) == 3
+
+
+def test_check_records_trust_and_warns_about_missing_intermediates(configured):
+    logged = []
+    ise.preflight(configured, FakeIse(trusted=chain_fps(configured)), logged.append)
+    state = store.read_json(paths.ISE_STATE)
+    assert set(chain_fps(configured)) <= set(state["trusted_fingerprints"])
+    assert any("does not trust Let's Encrypt YR1, YR2" in line for line in logged)
