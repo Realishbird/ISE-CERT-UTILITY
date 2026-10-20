@@ -188,22 +188,37 @@ def _ensure_chain(client, cas, import_chain, log):
         if not certs.is_ca(cert):
             raise RuntimeError("Refusing to import a certificate that is not a CA.")
         fp = certs.fingerprint(cert)
-        log(f"Importing trusted CA {certs.describe(cert)['subject']} (SHA-256 {fp[:16]}...).")
-        client.request("POST", "/api/v1/certs/trusted-certificate/import", {
-            "name": f"{NAME_PREFIX}CA {fp[:16]}",
-            "description": "Public CA chain imported by ise-cert-utility",
-            "data": certs.to_pem(cert),
-            "allowBasicConstraintCAFalse": False, "allowOutOfDateCert": False,
-            "allowSHA1Certificates": False, "validateCertificateExtensions": True,
-            "trustForIseAuth": True, "trustForClientAuth": False,
-            "trustForCertificateBasedAdminAuth": False, "trustForCiscoServicesAuth": False,
-        })
+        subject = certs.describe(cert)["subject"]
+        log(f"Importing trusted CA {subject} (SHA-256 {fp[:16]}...).")
+        try:
+            _import_trusted(client, cert, fp)
+        except ApiRejected as exc:
+            if "Security Check Failed" not in str(exc):
+                raise
+            # ISE's request filter flags the apostrophe in "Let's Encrypt"; the admin portal accepts the same file.
+            raise ApiRejected(
+                f"ISE's API refused to import {subject} (Security Check Failed), a known ISE false positive for "
+                "names such as \"Let's Encrypt\". Download the chain from the Certificate page, import that CA in "
+                "ISE under Administration > System > Certificates > Trusted Certificates with \"Trust for "
+                "authentication within ISE\", then run Deploy.") from None
     known = {row_fingerprint(r): r for r in client.trusted_certificates()}
     for cert in missing:
         row = known.get(certs.fingerprint(cert))
         if not row or row.get("status", "Enabled") != "Enabled":
             raise RuntimeError("A CA import could not be verified; check the ISE API audit log.")
     log("CA chain imported and verified. No system certificate assignments changed.")
+
+
+def _import_trusted(client, cert, fp):
+    client.request("POST", "/api/v1/certs/trusted-certificate/import", {
+        "name": f"{NAME_PREFIX}CA {fp[:16]}",
+        "description": "Public CA chain imported by ise-cert-utility",
+        "data": certs.to_pem(cert),
+        "allowBasicConstraintCAFalse": False, "allowOutOfDateCert": False,
+        "allowSHA1Certificates": False, "validateCertificateExtensions": True,
+        "trustForIseAuth": True, "trustForClientAuth": False,
+        "trustForCertificateBasedAdminAuth": False, "trustForCiscoServicesAuth": False,
+    })
 
 
 def _encrypted_key(domain, password):

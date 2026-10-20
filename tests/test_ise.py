@@ -136,6 +136,17 @@ def test_eap_pin_mismatch_stops_preflight(configured):
         ise.preflight(cfg, FakeIse(trusted=chain_fps(configured)), print)
 
 
+def test_security_check_rejection_explains_manual_import(configured):
+    class Filtered(FakeIse):
+        def request(self, method, path, body=None):
+            if path.endswith("/trusted-certificate/import"):
+                raise ise.ApiRejected("ISE rejected the request: HTTP 400: Security Check Failed")
+            return super().request(method, path, body)
+
+    with pytest.raises(ise.ApiRejected, match="Trusted Certificates"):
+        ise.preflight(configured, Filtered(), print, import_chain=True)
+
+
 def test_check_before_first_issue(configured):
     cfg = {**configured, "domain": "new.example.net"}
     leaf, rows = ise.preflight(cfg, FakeIse(), print, allow_missing=True)

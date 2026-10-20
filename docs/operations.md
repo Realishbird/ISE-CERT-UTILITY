@@ -74,6 +74,9 @@ ISE presents a certificate that is not publicly trusted. Paste its issuing CA un
 **"ISE rejected the API credentials (HTTP 401)"**
 Check the username and password, confirm the account is in the ERS Admin or Super Admin group, and confirm OpenAPI is enabled on the PAN.
 
+**"ISE's API refused to import ... (Security Check Failed)"** during Import CA chain or Renew and deploy
+ISE's request filter rejects some CA certificates through the API, notably Let's Encrypt intermediates whose organisation is "Let's Encrypt". The admin portal accepts the same file. Download the chain from the **Certificate** page, import the named CA in ISE under **Administration > System > Certificates > Trusted Certificates** with **Trust for authentication within ISE**, then run **Deploy**.
+
 **"ISE rejected the request: HTTP 404"** during Check ISE
 The node name does not match. Use the name exactly as shown in the ISE deployment list.
 
