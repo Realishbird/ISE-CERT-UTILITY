@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block heading %}Overview{% endblock %}
+{% block lede %}Certificate lifecycle for {{ cfg.node or 'your ISE node' }}{% if cfg.domain %} at {{ cfg.domain }}{% endif %}.{% endblock %}
+{% block content %}
+<div data-poll>
+<section class="summary" aria-label="Status summary">
+  <div class="summary-item">
+    <span class="summary-label">Certificate</span>
+    <span class="summary-value" data-bind="cert-days">–</span>
+    <span class="summary-meta" data-bind="cert-expiry">Loading</span>
+    <div class="meter" aria-hidden="true"><span data-bind="cert-meter"></span></div>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">ISE deployment</span>
+    <span class="summary-value" data-bind="ise-state">–</span>
+    <span class="summary-meta" data-bind="ise-meta">Loading</span>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">Automation</span>
+    <span class="summary-value" data-bind="sched-state">–</span>
+    <span class="summary-meta" data-bind="sched-meta">Loading</span>
+  </div>
+</section>
+
+<div class="grid-2">
+  {% include "_operations.html" %}
+  <section class="panel" aria-labelledby="recent-heading">
+    <div class="panel-header">
+      <h2 id="recent-heading">Recent activity</h2>
+      <a href="{{ url_for('activity') }}" class="panel-link">View all</a>
+    </div>
+    <table class="table">
+      <thead><tr><th>Operation</th><th>Result</th><th>Started</th></tr></thead>
+      <tbody data-bind="history"><tr><td colspan="3" class="empty">No operations yet.</td></tr></tbody>
+    </table>
+  </section>
+</div>
+</div>
+{% endblock %}

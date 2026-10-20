@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the ISE certificate maintenance window every minute
+Documentation=https://github.com/Realishbird/ISE-CERT-UTILITY
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

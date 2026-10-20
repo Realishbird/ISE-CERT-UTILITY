@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block heading %}Account{% endblock %}
+{% block lede %}Console sign-in and the certificate this console is served with.{% endblock %}
+{% block content %}
+<form class="settings-section" data-api="/api/password">
+  <div class="settings-intro">
+    <h2>Password</h2>
+    <p>Changing the password signs out every session. Lost access can be restored on the server with <code>ise-cert-utility init --reset-password</code>.</p>
+  </div>
+  <div class="settings-fields">
+    <label class="field">
+      <span class="field-label">Current password</span>
+      <input name="current_password" type="password" required autocomplete="current-password">
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">New password</span>
+        <input name="new_password" type="password" required minlength="14" maxlength="256" autocomplete="new-password">
+      </label>
+      <label class="field">
+        <span class="field-label">Confirm new password</span>
+        <input name="confirm_password" type="password" required minlength="14" maxlength="256" autocomplete="new-password">
+      </label>
+    </div>
+    <span class="field-help">At least 14 characters.</span>
+    <div class="form-actions"><button class="button button-primary" type="submit">Change password</button></div>
+  </div>
+</form>
+
+<section class="settings-section">
+  <div class="settings-intro">
+    <h2>Console certificate</h2>
+    <p>The console uses a self-signed certificate created at install time. Compare the fingerprint below with the installer output before trusting it in your browser.</p>
+  </div>
+  <div class="settings-fields">
+    {% if console_cert %}
+    <dl class="details">
+      <dt>Names</dt><dd>{{ console_cert.sans | join(', ') }}</dd>
+      <dt>Expires</dt><dd>{{ console_cert.expires[:10] }}</dd>
+      <dt>SHA-256</dt><dd class="mono break">{{ console_cert.fingerprint }}</dd>
+    </dl>
+    <form method="post" action="{{ url_for('download', kind='console') }}">
+      <input type="hidden" name="csrf" value="{{ csrf() }}">
+      <button class="button" type="submit">Download certificate</button>
+    </form>
+    {% else %}
+    <p class="muted">No console certificate found.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

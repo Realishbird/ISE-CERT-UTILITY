@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block heading %}Settings{% endblock %}
+{% block lede %}Saved credentials are stored on this server only and are never shown again.{% endblock %}
+{% block content %}
+{% if missing %}
+<div class="banner banner-warn"><strong>Still required:</strong> {{ missing | join(', ') }}.</div>
+{% endif %}
+
+<form class="settings-section" data-api="/api/settings/certificate" id="certificate">
+  <div class="settings-intro">
+    <h2>Certificate and DNS</h2>
+    <p>Let's Encrypt validates ownership with a DNS TXT record created through the Cloudflare API. The token needs <em>Zone: DNS: Edit</em> and <em>Zone: Zone: Read</em> on the zone that contains the hostname.</p>
+  </div>
+  <div class="settings-fields">
+    <label class="field">
+      <span class="field-label">Certificate hostname</span>
+      <input name="domain" value="{{ cfg.domain }}" required placeholder="ise.example.com" autocomplete="off" spellcheck="false">
+      <span class="field-help">The FQDN users and browsers reach ISE on.</span>
+    </label>
+    <label class="field">
+      <span class="field-label">ACME account email</span>
+      <input name="acme_email" type="email" value="{{ cfg.acme_email }}" required placeholder="pki@example.com">
+      <span class="field-help">Let's Encrypt sends account notices here.</span>
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Key type</span>
+        <select name="key_type">
+          {% for value, label in [('rsa2048', 'RSA 2048'), ('rsa3072', 'RSA 3072'), ('rsa4096', 'RSA 4096'), ('ecdsa256', 'ECDSA P-256'), ('ecdsa384', 'ECDSA P-384')] %}
+          <option value="{{ value }}" {% if cfg.key_type == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Renew when</span>
+        <span class="input-suffix"><input name="renew_days" type="number" min="7" max="60" value="{{ cfg.renew_days }}" required><span>days left</span></span>
+      </label>
+      <label class="field">
+        <span class="field-label">DNS wait</span>
+        <span class="input-suffix"><input name="dns_propagation" type="number" min="10" max="600" value="{{ cfg.dns_propagation }}" required><span>seconds</span></span>
+      </label>
+    </div>
+    <label class="field">
+      <span class="field-label">Cloudflare API token</span>
+      <input name="cloudflare_token" type="password" autocomplete="new-password" spellcheck="false"
+             placeholder="{{ 'Saved. Leave blank to keep the current token.' if saved.cloudflare_token else 'Paste a scoped API token' }}">
+    </label>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Save</button>
+      <button class="button" type="button" data-post="/api/test-cloudflare" data-include-form>Test token</button>
+    </div>
+  </div>
+</form>
+
+<form class="settings-section" data-api="/api/settings/ise" id="ise">
+  <div class="settings-intro">
+    <h2>ISE connection</h2>
+    <p>Uses the ISE OpenAPI certificate endpoints. Enable OpenAPI on the Primary Admin Node and use an account with the ERS Admin or Super Admin role.</p>
+    <p>The EAP certificate is never changed. The utility records it before every import and stops if it changes afterwards.</p>
+  </div>
+  <div class="settings-fields">
+    <div class="field-row">
+      <label class="field field-grow">
+        <span class="field-label">API host</span>
+        <input name="ise_host" value="{{ cfg.ise_host }}" placeholder="{{ cfg.domain or 'ise-pan.example.com' }}" spellcheck="false">
+        <span class="field-help">Primary Admin Node. Leave blank to use the certificate hostname.</span>
+      </label>
+      <label class="field field-narrow">
+        <span class="field-label">Port</span>
+        <input name="ise_port" type="number" min="1" max="65535" value="{{ cfg.ise_port }}" required>
+      </label>
+    </div>
+    <label class="field">
+      <span class="field-label">Node name</span>
+      <input name="node" value="{{ cfg.node }}" required placeholder="ise-01" spellcheck="false">
+      <span class="field-help">Hostname of the node as listed under Administration &gt; Deployment.</span>
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">API username</span>
+        <input name="username" value="{{ cfg.username }}" required autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span class="field-label">API password</span>
+        <input name="ise_password" type="password" autocomplete="new-password"
+               placeholder="{{ 'Saved. Leave blank to keep.' if saved.ise_password else 'Required' }}">
+      </label>
+    </div>
+    <fieldset class="field">
+      <legend class="field-label">Roles to assign</legend>
+      <label class="check"><input type="checkbox" name="deploy_admin" {% if cfg.deploy_admin %}checked{% endif %}><span>Admin <span class="muted">(restarts ISE application services on import)</span></span></label>
+      <label class="check"><input type="checkbox" name="deploy_portal" {% if cfg.deploy_portal %}checked{% endif %}><span>Portal</span></label>
+    </fieldset>
+    <label class="field">
+      <span class="field-label">Portal group tag</span>
+      <input name="portal_tag" value="{{ cfg.portal_tag }}">
+    </label>
+    <details class="disclosure" {% if cfg.eap_fingerprint or ise_ca or cfg.remove_superseded %}open{% endif %}>
+      <summary>Advanced</summary>
+      <label class="field">
+        <span class="field-label">Trusted CA for the ISE API</span>
+        <textarea name="ise_ca_pem" rows="4" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        <span class="field-help">Needed only while ISE presents a self-signed or private-CA admin certificate. Paste the issuing CA in PEM format.</span>
+      </label>
+      {% if ise_ca %}
+      <div class="inline-list">
+        {% for ca in ise_ca %}<div><span class="mono">{{ ca.subject }}</span> <span class="muted">expires {{ ca.expires[:10] }}</span></div>{% endfor %}
+        <label class="check"><input type="checkbox" name="clear_ise_ca"><span>Remove the saved CA</span></label>
+      </div>
+      {% endif %}
+      <label class="field">
+        <span class="field-label">Pinned EAP certificate (SHA-256)</span>
+        <input name="eap_fingerprint" value="{{ cfg.eap_fingerprint }}" class="mono" spellcheck="false" placeholder="Optional">
+        <span class="field-help">If set, operations stop unless ISE's EAP certificate has exactly this fingerprint.</span>
+      </label>
+      <label class="field field-narrow-wide">
+        <span class="field-label">Verification timeout</span>
+        <span class="input-suffix"><input name="verify_minutes" type="number" min="5" max="90" value="{{ cfg.verify_minutes }}" required><span>minutes</span></span>
+      </label>
+      <label class="check"><input type="checkbox" name="remove_superseded" {% if cfg.remove_superseded %}checked{% endif %}><span>After a verified deployment, delete unused certificates this utility imported earlier</span></label>
+    </details>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Save</button>
+    </div>
+  </div>
+</form>
+
+<form class="settings-section" data-api="/api/settings/schedule" id="schedule">
+  <div class="settings-intro">
+    <h2>Maintenance window</h2>
+    <p>Automatic runs start only inside this window. If a run fails, it is retried within the same window. Windows that cross midnight belong to the day they open.</p>
+  </div>
+  <div class="settings-fields">
+    <label class="check check-strong"><input type="checkbox" name="schedule_enabled" {% if cfg.schedule_enabled %}checked{% endif %}><span>Renew and deploy automatically</span></label>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Opens</span>
+        <input type="time" name="window_start" value="{{ cfg.window_start }}" required>
+      </label>
+      <label class="field">
+        <span class="field-label">Closes</span>
+        <input type="time" name="window_end" value="{{ cfg.window_end }}" required>
+      </label>
+      <label class="field field-grow">
+        <span class="field-label">Time zone</span>
+        <input name="timezone" value="{{ cfg.timezone }}" required list="tz-list" spellcheck="false">
+        <datalist id="tz-list"></datalist>
+      </label>
+    </div>
+    <fieldset class="field">
+      <legend class="field-label">Days</legend>
+      <div class="segmented">
+        {% for day in weekdays %}
+        <label><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {% if loop.index0 in cfg.weekdays %}checked{% endif %}><span>{{ day }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="field-row">
+      <label class="field">
+        <span class="field-label">Attempts per window</span>
+        <input name="max_attempts" type="number" min="1" max="10" value="{{ cfg.max_attempts }}" required>
+      </label>
+      <label class="field">
+        <span class="field-label">Retry after</span>
+        <span class="input-suffix"><input name="retry_minutes" type="number" min="10" max="240" value="{{ cfg.retry_minutes }}" required><span>minutes</span></span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Save</button>
+    </div>
+  </div>
+</form>
+
+<form class="settings-section" data-api="/api/settings/notifications" id="notifications">
+  <div class="settings-intro">
+    <h2>Notifications</h2>
+    <p>Posts a JSON message with a <code>text</code> field to an HTTPS webhook. Works with Slack incoming webhooks, Microsoft Teams workflows and most chat or incident tools.</p>
+  </div>
+  <div class="settings-fields">
+    <label class="field">
+      <span class="field-label">Webhook URL</span>
+      <input name="webhook_url" type="password" autocomplete="off" spellcheck="false"
+             placeholder="{{ 'Saved. Leave blank to keep.' if saved.webhook_url else 'https://' }}">
+    </label>
+    {% if saved.webhook_url %}<label class="check"><input type="checkbox" name="clear_webhook"><span>Remove the saved webhook</span></label>{% endif %}
+    <label class="field field-narrow-wide">
+      <span class="field-label">Send</span>
+      <select name="notify_on">
+        {% for value, label in [('failure', 'Failures only'), ('always', 'Every operation'), ('never', 'Never')] %}
+        <option value="{{ value }}" {% if cfg.notify_on == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Save</button>
+      <button class="button" type="button" data-post="/api/test-notification">Send test</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

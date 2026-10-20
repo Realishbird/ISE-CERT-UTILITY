@@ -1,0 +1,36 @@
+<section class="panel" aria-labelledby="ops-heading">
+  <div class="panel-header">
+    <h2 id="ops-heading">Operations</h2>
+    <span class="status" data-bind="job-state">Idle</span>
+  </div>
+  <ul class="action-list">
+    <li>
+      <div><strong>Check ISE</strong><p>Validate the certificate, chain and API access. Changes nothing.</p></div>
+      <button class="button" data-action="check">Run check</button>
+    </li>
+    <li>
+      <div><strong>Test renewal</strong><p>Prove DNS validation through Cloudflare against the Let's Encrypt staging service.</p></div>
+      <button class="button" data-action="test-renewal">Run test</button>
+    </li>
+    <li>
+      <div><strong>Import CA chain</strong><p>Add any missing issuing CAs to the ISE trusted certificate store.</p></div>
+      <button class="button" data-action="trust-chain">Import</button>
+    </li>
+    <li>
+      <div><strong>Renew and deploy</strong><p>Renew if within {{ cfg.renew_days }} days of expiry, then install on ISE if it is not already serving the certificate.</p></div>
+      <button class="button button-primary" data-action="renew" data-confirm="renew">Renew and deploy</button>
+    </li>
+    <li>
+      <div><strong>Deploy current certificate</strong><p>Install the certificate already on disk without contacting Let's Encrypt.</p></div>
+      <button class="button" data-action="deploy" data-confirm="deploy">Deploy</button>
+    </li>
+  </ul>
+  <div class="banner banner-warn" data-bind="pending" hidden>
+    <div>
+      <strong>Unverified import.</strong>
+      A previous import to ISE was not confirmed, so further imports are blocked. Check the system certificates in ISE, then clear the marker.
+    </div>
+    <button class="button button-small" data-post="/api/clear-pending" data-confirm-text="Clear the pending import marker? Only do this after confirming the certificate state in ISE.">Clear marker</button>
+  </div>
+</section>
+{% include "_confirm.html" %}

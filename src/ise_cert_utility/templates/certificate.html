@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Certificate{% endblock %}
+{% block heading %}Certificate{% endblock %}
+{% block lede %}The certificate currently issued by Let's Encrypt for this deployment.{% endblock %}
+{% block content %}
+{% if not cert.present %}
+<section class="panel empty-state">
+  <h2>No certificate issued yet</h2>
+  <p class="muted">Complete the settings, then run <strong>Renew and deploy</strong> from the Overview page to request the first certificate.</p>
+  <a class="button" href="{{ url_for('overview') }}">Go to Overview</a>
+</section>
+{% elif cert.error %}
+<div class="banner banner-error">{{ cert.error }}</div>
+{% else %}
+<div class="grid-2 grid-wide-left">
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Details</h2>
+      <span class="status {% if cert.days > cfg.renew_days %}status-succeeded{% elif cert.days > 7 %}status-warning{% else %}status-failed{% endif %}">
+        {{ cert.days }} days remaining
+      </span>
+    </div>
+    <dl class="details">
+      <dt>Subject</dt><dd>{{ cert.subject }}</dd>
+      <dt>Names</dt><dd>{{ cert.sans | join(', ') }}</dd>
+      <dt>Issuer</dt><dd>{{ cert.issuer }}</dd>
+      <dt>Valid from</dt><dd>{{ cert.not_before[:16] | replace('T', ' ') }} UTC</dd>
+      <dt>Valid until</dt><dd>{{ cert.expires[:16] | replace('T', ' ') }} UTC</dd>
+      <dt>Key</dt><dd>{{ cert.key }}</dd>
+      <dt>Serial</dt><dd class="mono">{{ cert.serial }}</dd>
+      <dt>SHA-256</dt><dd class="mono break">{{ cert.fingerprint }}</dd>
+    </dl>
+  </section>
+  <section class="panel">
+    <div class="panel-header"><h2>Public files</h2></div>
+    <ul class="file-list">
+      {% for kind, label, name in [('certificate', 'Certificate', 'cert.pem'), ('chain', 'Intermediate chain', 'chain.pem'), ('fullchain', 'Certificate and chain', 'fullchain.pem')] %}
+      <li>
+        <div><strong>{{ label }}</strong><span class="cell-sub">{{ name }}</span></div>
+        <form method="post" action="{{ url_for('download', kind=kind) }}">
+          <input type="hidden" name="csrf" value="{{ csrf() }}">
+          <button class="button button-small" type="submit">Download</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h2>Export with private key</h2>
+      <p class="panel-sub">For installing the same certificate on another system. The file is encrypted with the export password you choose, and each export is written to the service log.</p>
+    </div>
+  </div>
+  <form method="post" action="{{ url_for('download', kind='pfx') }}" class="form-row" id="export-form">
+    <input type="hidden" name="csrf" value="{{ csrf() }}">
+    <label class="field">
+      <span class="field-label">Format</span>
+      <select id="export-kind">
+        <option value="pfx">PKCS#12 (.pfx) with chain</option>
+        <option value="key">Encrypted PKCS#8 key (.pem)</option>
+      </select>
+    </label>
+    <label class="field">
+      <span class="field-label">Console password</span>
+      <input type="password" name="current_password" required autocomplete="current-password">
+    </label>
+    <label class="field">
+      <span class="field-label">Export password</span>
+      <input type="password" name="export_password" required minlength="14" maxlength="256" autocomplete="new-password">
+    </label>
+    <button class="button" type="submit">Export</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
