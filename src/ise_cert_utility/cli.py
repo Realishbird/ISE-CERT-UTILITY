@@ -108,6 +108,7 @@ def cmd_status(args):
     out = {
         "version": __version__,
         "domain": cfg["domain"],
+        "names": config.cert_names(cfg),
         "certificate": certs.info(cfg["domain"]),
         "ise": store.read_json(paths.ISE_STATE),
         "job": jobs.current(),
@@ -118,6 +119,8 @@ def cmd_status(args):
         print(json.dumps(out, indent=2, default=str))
         return 0
     cert = out["certificate"]
+    if cfg["extra_names"]:
+        print(f"Also covers:   {', '.join(cfg['extra_names'])}")
     print(f"Domain:        {cfg['domain'] or '(not configured)'}")
     print(f"Certificate:   {cert.get('expires', 'none')[:10]} ({cert.get('days', '-')} days left)"
           if cert.get("present") else "Certificate:   not issued")

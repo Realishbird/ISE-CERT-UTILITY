@@ -51,16 +51,6 @@ def test_certbot_arguments_use_private_dirs(configured):
     assert args[args.index("--config-dir") + 1].startswith(str(paths.ACME))
 
 
-@pytest.fixture
-def client(configured):
-    store.write_private(paths.WEB_SECRET, "k" * 64)
-    store.write_json(paths.AUTH, {"username": "admin", "password_hash": web.hash_password("correct horse battery"),
-                                  "generation": "g1"})
-    app = web.create_app()
-    app.config["TESTING"] = True
-    return app.test_client()
-
-
 def csrf(client, path="/login"):
     page = client.get(path).get_data(as_text=True)
     return re.search(r'name="csrf(?:-token)?" (?:value|content)="([^"]+)"', page).group(1)

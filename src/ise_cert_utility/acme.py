@@ -34,9 +34,10 @@ def certbot_args(cfg, force=False, dry_run=False):
         "--dns-cloudflare-credentials", str(paths.CLOUDFLARE_INI),
         "--dns-cloudflare-propagation-seconds", str(cfg["dns_propagation"]),
         "--cert-name", cfg["domain"],
-        "-d", cfg["domain"],
         "--key-type", key_type,
     ]
+    for name in config.cert_names(cfg):
+        args += ["-d", name]
     args += ["--rsa-key-size", key_param] if key_type == "rsa" else ["--elliptic-curve", key_param]
     if dry_run:
         args.append("--dry-run")
@@ -60,6 +61,13 @@ def renewal_decision(cfg, force=False):
     wanted = f"RSA {key_param}" if key_type == "rsa" else f"ECDSA {key_param}"
     if current["key"] != wanted:
         return True, True, f"Key type changed from {current['key']} to {wanted}; replacing the certificate."
+    wanted_names = set(config.cert_names(cfg))
+    if set(current["sans"]) != wanted_names:
+        added = sorted(wanted_names - set(current["sans"]))
+        removed = sorted(set(current["sans"]) - wanted_names)
+        change = "; ".join(filter(None, [added and "adding " + ", ".join(added),
+                                         removed and "removing " + ", ".join(removed)]))
+        return True, True, f"Certificate names changed ({change}); requesting a replacement."
     if current["days"] <= cfg["renew_days"]:
         return True, True, f"Certificate expires in {current['days']} days (threshold {cfg['renew_days']})."
     return False, False, f"Certificate is valid for {current['days']} more days; renewal not due."
@@ -82,18 +90,45 @@ def _cloudflare(path, token):
         raise RuntimeError(f"Could not reach the Cloudflare API: {getattr(exc, 'reason', exc)}") from None
 
 
-def test_cloudflare(token, domain):
-    """Verify the token is active and can see the zone that hosts domain."""
+def find_zone(name, token, cache=None):
+    """Return the Cloudflare zone that hosts name, or None if the token cannot see one."""
+    labels = name.removeprefix("*.").split(".")
+    for i in range(len(labels) - 1):
+        candidate = ".".join(labels[i:])
+        if cache is not None and candidate in cache:
+            found = cache[candidate]
+        else:
+            found = bool(_cloudflare("/zones?" + urllib.parse.urlencode({"name": candidate}), token).get("result"))
+            if cache is not None:
+                cache[candidate] = found
+        if found:
+            return candidate
+    return None
+
+
+def check_zones(token, names):
+    """Map each name to its Cloudflare zone; raise if any name has no visible zone."""
+    cache, zones, missing = {}, {}, []
+    for name in names:
+        zone = find_zone(name, token, cache)
+        if zone:
+            zones[name] = zone
+        else:
+            missing.append(name)
+    if missing:
+        raise RuntimeError(f"No Cloudflare zone visible to the token for {', '.join(missing)}. "
+                           "Grant Zone:DNS:Edit and Zone:Zone:Read on each zone that hosts these names.")
+    return zones
+
+
+def test_cloudflare(token, names):
+    """Verify the token is active and can see the zone for every certificate name."""
     result = _cloudflare("/user/tokens/verify", token)
     if not result.get("success") or result.get("result", {}).get("status") != "active":
         raise RuntimeError("Cloudflare reports the token is not active.")
-    if not domain:
+    if not names:
         return "Token is active. Save a certificate hostname to check zone access."
-    labels = domain.split(".")
-    for i in range(len(labels) - 1):
-        candidate = ".".join(labels[i:])
-        zones = _cloudflare("/zones?" + urllib.parse.urlencode({"name": candidate}), token)
-        if zones.get("result"):
-            return f"Token is active and can access the zone {candidate}."
-    raise RuntimeError(f"Token is active but no Cloudflare zone for {domain} is visible to it. "
-                       "Grant Zone:DNS:Edit and Zone:Zone:Read on that zone.")
+    zones = sorted(set(check_zones(token, names).values()))
+    noun = "zone" if len(zones) == 1 else "zones"
+    count = f"all {len(names)} names" if len(names) > 1 else names[0]
+    return f"Token is active and can manage DNS for {count} in the {noun} {', '.join(zones)}."

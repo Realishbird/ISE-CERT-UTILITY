@@ -19,10 +19,12 @@ KEY_TYPES = {
 }
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 NOTIFY_LEVELS = ("never", "failure", "always")
+MAX_NAMES = 100  # Let's Encrypt limit per certificate, including the primary hostname
 
 DEFAULTS = {
     # Certificate
     "domain": "",
+    "extra_names": [],
     "acme_email": "",
     "key_type": "rsa2048",
     "renew_days": 30,
@@ -83,6 +85,13 @@ def write_cloudflare_ini(token):
     store.write_private(paths.CLOUDFLARE_INI, f"dns_cloudflare_api_token = {token}\n")
 
 
+def cert_names(cfg):
+    """All DNS names requested on the certificate, primary hostname first."""
+    if not cfg.get("domain"):
+        return []
+    return [cfg["domain"], *cfg.get("extra_names", [])]
+
+
 def ise_host(cfg):
     return cfg.get("ise_host") or cfg.get("domain")
 
@@ -131,11 +140,36 @@ def _flag(form, key):
     return str(form.get(key, "")).lower() in ("1", "on", "true", "yes")
 
 
-def hostname(value, label="Hostname"):
+def hostname(value, label="Hostname", wildcard=False):
     value = value.strip().lower().rstrip(".")
-    if len(value) > 253 or not _HOSTNAME.fullmatch(value):
+    base = value[2:] if wildcard and value.startswith("*.") else value
+    if len(value) > 253 or not _HOSTNAME.fullmatch(base):
         raise ValueError(f"{label} must be a fully qualified DNS name without a scheme or port.")
     return value
+
+
+def extra_names(value, primary):
+    """Parse additional certificate names from text separated by commas or whitespace.
+
+    Wildcards are accepted. Duplicates, the primary hostname, and names already
+    covered by a wildcard in the list are rejected, as Let's Encrypt refuses them.
+    """
+    raw = value if isinstance(value, list) else re.split(r"[\s,]+", value or "")
+    names = []
+    for item in filter(None, (n.strip() for n in raw)):
+        name = hostname(item, f"Additional name {item[:64]!r}", wildcard=True)
+        if name == primary:
+            raise ValueError(f"{name} is already the certificate hostname.")
+        if name in names:
+            raise ValueError(f"{name} is listed more than once.")
+        names.append(name)
+    wildcards = {n[2:] for n in [primary, *names] if n.startswith("*.")}
+    for name in [primary, *names]:
+        if not name.startswith("*.") and name.split(".", 1)[1] in wildcards:
+            raise ValueError(f"{name} is already covered by *.{name.split('.', 1)[1]}; remove one of them.")
+    if len(names) + 1 > MAX_NAMES:
+        raise ValueError(f"A certificate can hold at most {MAX_NAMES} names, including the hostname.")
+    return names
 
 
 def fingerprint(value):
@@ -152,8 +186,10 @@ def validate_certificate(form):
     key_type = form.get("key_type", "rsa2048")
     if key_type not in KEY_TYPES:
         raise ValueError("Choose a supported key type.")
+    domain = hostname(_text(form, "domain", 253, label="Certificate hostname"), "Certificate hostname")
     clean = {
-        "domain": hostname(_text(form, "domain", 253, label="Certificate hostname"), "Certificate hostname"),
+        "domain": domain,
+        "extra_names": extra_names(form.get("extra_names", ""), domain),
         "acme_email": email,
         "key_type": key_type,
         "renew_days": _int(form, "renew_days", 7, 60, "Renewal threshold"),

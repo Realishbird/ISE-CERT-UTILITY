@@ -12,6 +12,16 @@
 {% elif cert.error %}
 <div class="banner banner-error">{{ cert.error }}</div>
 {% else %}
+{% set pending = names | reject('in', cert.sans) | list %}
+{% set dropped = cert.sans | reject('in', names) | list %}
+{% if pending or dropped %}
+<div class="banner banner-warn">
+  <strong>Names have changed since this certificate was issued.</strong>
+  {% if pending %}Not yet included: {{ pending | join(', ') }}.{% endif %}
+  {% if dropped %}No longer configured: {{ dropped | join(', ') }}.{% endif %}
+  The next Renew and deploy run requests a replacement.
+</div>
+{% endif %}
 <div class="grid-2 grid-wide-left">
   <section class="panel">
     <div class="panel-header">
@@ -22,7 +32,7 @@
     </div>
     <dl class="details">
       <dt>Subject</dt><dd>{{ cert.subject }}</dd>
-      <dt>Names</dt><dd>{{ cert.sans | join(', ') }}</dd>
+      <dt>Names</dt><dd>{% for name in cert.sans %}<span class="mono">{{ name }}</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
       <dt>Issuer</dt><dd>{{ cert.issuer }}</dd>
       <dt>Valid from</dt><dd>{{ cert.not_before[:16] | replace('T', ' ') }} UTC</dd>
       <dt>Valid until</dt><dd>{{ cert.expires[:16] | replace('T', ' ') }} UTC</dd>

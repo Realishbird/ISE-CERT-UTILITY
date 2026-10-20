@@ -180,7 +180,7 @@ def create_app():
     @app.get("/certificate")
     def certificate():
         cfg = config.load()
-        return page("certificate.html", cert=certs.info(cfg["domain"]))
+        return page("certificate.html", cert=certs.info(cfg["domain"]), names=config.cert_names(cfg))
 
     @app.get("/settings")
     def settings():
@@ -211,6 +211,7 @@ def create_app():
         upcoming = schedule.next_window(cfg) if cfg["schedule_enabled"] else None
         return jsonify(
             certificate=certs.info(cfg["domain"]),
+            names=config.cert_names(cfg),
             renew_days=cfg["renew_days"],
             job=job,
             log=log,
@@ -276,10 +277,15 @@ def create_app():
         token = (request.form.get("cloudflare_token") or "").strip() or config.secrets().get("cloudflare_token")
         if not token:
             return jsonify(error="Enter or save a Cloudflare API token first."), 400
-        domain = (request.form.get("domain") or "").strip().lower() or config.load()["domain"]
+        saved = config.load()
         try:
-            return jsonify(message=acme.test_cloudflare(token, domain))
-        except RuntimeError as exc:
+            if request.form.get("domain"):
+                domain = config.hostname(request.form["domain"], "Certificate hostname")
+                names = [domain, *config.extra_names(request.form.get("extra_names", ""), domain)]
+            else:
+                names = config.cert_names(saved)
+            return jsonify(message=acme.test_cloudflare(token, names))
+        except (RuntimeError, ValueError) as exc:
             return jsonify(error=str(exc)), 400
 
     @app.post("/api/test-notification")

@@ -8,12 +8,23 @@ Settings cannot be changed while an operation is running.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| Certificate hostname | | FQDN that users and browsers use to reach ISE. Becomes the certificate's only subject alternative name. |
+| Certificate hostname | | FQDN that users and browsers use to reach ISE. Becomes the certificate's subject and first subject alternative name. |
+| Additional names | none | Further DNS names to include as subject alternative names, one per line. See [Additional names](#additional-names). |
 | ACME account email | | Registered with Let's Encrypt for account and expiry notices. |
 | Key type | RSA 2048 | RSA 2048, 3072, 4096, or ECDSA P-256, P-384. Changing it replaces the certificate at the next renewal run. Confirm your ISE release supports ECDSA before choosing it. |
 | Renew when | 30 days left | The certificate is renewed when it has this many days or fewer remaining. Let's Encrypt certificates last 90 days. |
 | DNS wait | 30 seconds | Time to wait after creating the TXT record before asking Let's Encrypt to validate. Increase it if validation fails intermittently. |
 | Cloudflare API token | | Scoped API token; see the [installation guide](installation.md#3-create-the-cloudflare-api-token). Also written to `cloudflare.ini` for Certbot. |
+
+### Additional names
+
+Use additional names when one certificate must cover more than the admin hostname, for example the FQDNs of guest, sponsor or BYOD portals, other nodes in the deployment, or a wildcard such as `*.portal.example.com`.
+
+- Every name must be in a zone managed by Cloudflare, and the API token needs **Zone / DNS / Edit** and **Zone / Zone / Read** on each of those zones. Names may span several zones. **Test token** reports the zone found for each name and lists any it cannot reach.
+- Let's Encrypt validates each name separately with its own DNS TXT record, so a run takes slightly longer for every name added.
+- A wildcard covers one label only: `*.example.com` covers `guest.example.com` but not `example.com` or `a.guest.example.com`. Names already covered by a wildcard in the list are rejected, because Let's Encrypt refuses them.
+- A certificate holds at most 100 names, including the certificate hostname.
+- Changing the list makes the next **Renew and deploy** run request a replacement certificate immediately, without waiting for the renewal threshold. The **Certificate** page shows which names are pending until then, and deployment to ISE is blocked while the certificate on disk is missing a configured name.
 
 ## ISE connection
 

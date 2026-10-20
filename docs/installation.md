@@ -46,9 +46,9 @@ If ISE currently presents a self-signed or private-CA admin certificate, export 
 In the Cloudflare dashboard, open **My Profile > API Tokens > Create Token** and use the **Edit zone DNS** template:
 
 - Permissions: **Zone / DNS / Edit** and **Zone / Zone / Read**
-- Zone resources: **Include / Specific zone /** the zone that contains the ISE hostname
+- Zone resources: **Include / Specific zone /** the zone that contains the ISE hostname, plus any other zone that hosts one of the certificate's [additional names](configuration.md#additional-names)
 
-Restrict client IP addresses to the container's public egress address if it is fixed. The console's **Test token** button confirms the token is active and can see the zone.
+Restrict client IP addresses to the container's public egress address if it is fixed. The console's **Test token** button confirms the token is active and can see the zone for every name on the certificate.
 
 ## 4. Install
 

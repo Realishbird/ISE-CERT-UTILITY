@@ -14,8 +14,8 @@ Only one operation runs at a time. Operations started from the console run in th
 
 ## Renewal and deployment sequence
 
-1. **Renewal decision.** If no certificate exists, the key type changed, or fewer than *Renew when* days remain, Certbot requests a new certificate. Otherwise this step is skipped.
-2. **Local validation.** The certificate must match the hostname, be valid for at least 7 more days, carry the serverAuth usage, chain to a root in the system trust store, and match the private key.
+1. **Renewal decision.** If no certificate exists, the key type or the list of names changed, or fewer than *Renew when* days remain, Certbot requests a new certificate. Otherwise this step is skipped.
+2. **Local validation.** The certificate must match the hostname, include every configured additional name, be valid for at least 7 more days, carry the serverAuth usage, chain to a root in the system trust store, and match the private key.
 3. **ISE preflight.** The node's system certificates are read. The current EAP certificate is recorded, and checked against the pin if one is set.
 4. **Trust chain.** Missing CAs are imported and the import is confirmed.
 5. **Idempotency check.** If ISE already serves this certificate for the selected roles, the run ends here with no import and no restart.
@@ -78,7 +78,10 @@ Check the username and password, confirm the account is in the ERS Admin or Supe
 The node name does not match. Use the name exactly as shown in the ISE deployment list.
 
 **Test renewal fails with a DNS or authorization error**
-Use **Test token** under Settings to confirm the token sees the zone. If the zone is correct, increase **DNS wait** to 60 or 120 seconds.
+Use **Test token** under Settings to confirm the token sees the zone for every name. Before contacting Let's Encrypt, Test renewal and Renew and deploy stop with a list of any names whose zone the token cannot see. If the zones are correct, increase **DNS wait** to 60 or 120 seconds.
+
+**"The certificate does not include ..."** during Check ISE or Deploy
+Additional names were added after the certificate was issued. Run **Renew and deploy** to request a certificate with the current list.
 
 **"The certificate chain did not validate against public roots"**
 The container's CA bundle is out of date. Run `apt-get update && apt-get install --only-upgrade ca-certificates`.
