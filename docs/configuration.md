@@ -30,9 +30,10 @@ Use additional names when one certificate must cover more than the admin hostnam
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| API host | certificate hostname | Primary Admin Node FQDN. Set it when the PAN differs from the node receiving the certificate. |
-| Port | 443 | OpenAPI port on the PAN. |
-| Node name | | Target node as listed under Administration > System > Deployment. |
+| API host | certificate hostname | Primary Admin Node FQDN. The deployment node list and the trusted certificate store are read here. |
+| Port | 443 | OpenAPI port, the same on every node. |
+| Nodes to update | listed nodes | **Only the nodes listed** updates the nodes named below. **Every node in the deployment** reads the node list from ISE on each run, so nodes added later are picked up automatically. |
+| Nodes | | One node per line, named as under Administration > System > Deployment. Optionally follow the name with the API host used to reach that node, for example `psn-02 psn-02.mgmt.example.com`. In *every node* mode, lines here only override API hosts. |
 | API username, password | | ISE administrator with the ERS Admin or Super Admin role. |
 | Roles to assign | Admin, Portal | Admin replaces the certificate used by the admin GUI and API and **restarts ISE application services**. Portal replaces the certificate for the selected portal group. |
 | Portal group tag | Default Portal Certificate Group | Required when Portal is selected. |
@@ -42,9 +43,22 @@ Use additional names when one certificate must cover more than the admin hostnam
 | Setting | Default | Description |
 | --- | --- | --- |
 | Trusted CA for the ISE API | none | PEM certificate(s) trusted in addition to the system store when connecting to ISE. Needed while ISE presents a self-signed or private-CA admin certificate. |
-| Pinned EAP certificate | none | SHA-256 fingerprint. When set, every operation stops unless ISE's EAP certificate is exactly this one. Without it, the utility still stops if the EAP assignment changes during an import. |
-| Verification timeout | 30 minutes | How long to wait for ISE to come back and report the new certificate after an import. |
-| Delete superseded certificates | off | After a verified deployment, delete system certificates on the node that this utility imported earlier and that are no longer used by any role. Certificates imported by other means are never touched. |
+| Pinned EAP certificates | none | SHA-256 fingerprints, one per line. When set, every operation stops unless each node's EAP certificate is one of these. Nodes often have their own EAP certificate, so list one per node. Without a pin, the utility still stops if a node's EAP assignment changes during an import. |
+| Verification timeout per node | 30 minutes | How long to wait for a node to come back and report the new certificate after an import. |
+| Delete superseded certificates | off | After a verified deployment, delete system certificates on each node that this utility imported earlier and that are no longer used by any role. Certificates imported by other means are never touched. |
+
+## Multiple ISE nodes
+
+ISE's API has no way to import a system certificate onto another node: the certificate is installed on the node that receives the request. The utility therefore connects to each node's own API host, which means:
+
+- OpenAPI must answer on every node being updated, and the container needs HTTPS access to each of them.
+- Each node's API host is, in order of preference, the host given after its name in **Nodes**, the **API host** setting for the Primary Admin Node (or when only one node is configured), and otherwise the FQDN ISE reports for the node.
+- With the Admin role, the certificate must include each node's API host, because that is the name the admin GUI and the utility use to reach it. Add node FQDNs under **Additional names**. Portal-only deployments do not need them.
+- If a node still presents a self-signed or private-CA admin certificate, add its issuing CA under **Trusted CA for the ISE API**.
+
+Nodes are updated one at a time: Policy Service and dedicated Monitoring nodes first, then the Secondary Admin Node, and the Primary Admin Node last. Each node is verified before the next import starts, so at most one node is restarting at any moment and the PAN is only touched after every other node succeeded. Roles come from the deployment list; if the API account cannot read it in *listed nodes* mode, nodes are updated in the order listed.
+
+Trusted certificates replicate across the deployment, so CA imports (including a manual import of a Let's Encrypt intermediate) are done once, on the PAN.
 
 ## Maintenance window
 

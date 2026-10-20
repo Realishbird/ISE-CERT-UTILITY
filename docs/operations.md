@@ -4,7 +4,7 @@
 
 | Operation | Changes ISE | Contacts Let's Encrypt | Description |
 | --- | --- | --- | --- |
-| Check ISE | No | No | Validates the local certificate, chain and key, reads the node's system certificates and the trusted store, and records whether ISE serves the current certificate. |
+| Check ISE | No | No | Validates the local certificate, chain and key, reads each node's system certificates and the trusted store, and records whether each node serves the current certificate. |
 | Test renewal | No | Staging only | Runs Certbot with `--dry-run` against the staging service. Proves the Cloudflare token and DNS propagation without affecting the real certificate or rate limits. |
 | Import CA chain | Trusted store only | No | Adds the intermediate and root CAs that ISE does not already trust. System certificate assignments are not changed. |
 | Renew and deploy | Yes, if needed | If due | Renews when the certificate is within the renewal threshold (or when forced), then deploys if ISE does not already serve it. This is what the scheduler runs. |
@@ -16,21 +16,25 @@ Only one operation runs at a time. Operations started from the console run in th
 
 1. **Renewal decision.** If no certificate exists, the key type or the list of names changed, or fewer than *Renew when* days remain, Certbot requests a new certificate. Otherwise this step is skipped.
 2. **Local validation.** The certificate must match the hostname, include every configured additional name, be valid for at least 7 more days, carry the serverAuth usage, chain to a root in the system trust store, and match the private key.
-3. **ISE preflight.** The node's system certificates are read. The current EAP certificate is recorded, and checked against the pin if one is set.
+3. **ISE preflight.** The target nodes are resolved and put in update order (see [Multiple ISE nodes](configuration.md#multiple-ise-nodes)). Every node's system certificates are read through its own API host, its EAP certificate is recorded and checked against the pins, and with the Admin role its API host must be on the certificate. If any node fails, nothing is imported.
 4. **Trust chain.** Missing CAs are imported and the import is confirmed.
-5. **Idempotency check.** If ISE already serves this certificate for the selected roles, the run ends here with no import and no restart.
-6. **Window check.** Scheduled runs confirm the maintenance window is still open.
-7. **Import.** A pending-import marker is written, then the certificate and an encrypted copy of the key are sent to ISE once. With the Admin role, ISE restarts its application services.
-8. **Verification.** The utility polls ISE every 30 seconds until the new certificate is assigned to the selected roles and the EAP certificate is unchanged, or until the verification timeout.
-9. **Cleanup.** The pending marker is removed and, if enabled, superseded certificates imported earlier are deleted.
+5. **Idempotency check.** Nodes that already serve this certificate for the selected roles are skipped. If every node does, the run ends here with no import and no restart.
+
+Steps 6 to 8 then run for each remaining node in turn:
+
+6. **Window check.** Scheduled runs confirm the maintenance window is still open. If it has closed, the remaining nodes are updated in the next window.
+7. **Import.** A pending-import marker for the node is written, then the certificate and an encrypted copy of the key are sent to that node once. With the Admin role, the node restarts its application services.
+8. **Verification.** The utility polls the node every 30 seconds until the new certificate is assigned to the selected roles and its EAP certificate is unchanged, or until the verification timeout. A failure stops the run, so later nodes, including the Primary Admin Node, are left untouched. The next run continues with the nodes that still need the certificate.
+
+9. **Cleanup.** If enabled, superseded certificates imported earlier are deleted on each node.
 
 ## The pending-import marker
 
-The ISE import call can succeed even when its HTTP response is lost, because the Admin role restart drops connections. To avoid importing twice, the utility writes a marker before the request and removes it only after verification.
+The ISE import call can succeed even when its HTTP response is lost, because the Admin role restart drops connections. To avoid importing twice, the utility writes a marker for the node before the request and removes it only after verification.
 
-If verification times out, the marker remains and further imports are blocked. The Overview page then shows **Unverified import**. To recover:
+If verification times out, the marker remains and further imports to that node are blocked. The Overview page then shows **Unverified import**. To recover:
 
-1. Open ISE, go to **Administration > System > Certificates > System Certificates**, and check whether the node shows the new certificate on the expected roles.
+1. Open ISE, go to **Administration > System > Certificates > System Certificates**, and check whether the node named in the operation log shows the new certificate on the expected roles.
 2. If it does, or if the import clearly failed, select **Clear marker** in the console.
 3. Run **Deploy current certificate**. If ISE already serves the certificate, the run ends without importing.
 
@@ -82,6 +86,15 @@ Let's Encrypt signs each renewal with one of two active intermediates, chosen pe
 
 **"ISE rejected the request: HTTP 404"** during Check ISE
 The node name does not match. Use the name exactly as shown in the ISE deployment list.
+
+**"N of M nodes failed their checks, so nothing was imported"**
+The **ISE nodes** panel on the Overview page shows the reason for each node. Common causes are an API host the container cannot reach, OpenAPI not answering on that node, a node's admin certificate signed by a CA the utility does not trust yet, or a node's EAP certificate missing from the pins.
+
+**"The certificate does not include psn-01.example.com, so node psn-01 cannot use it for the Admin role"**
+Add the node's FQDN under **Additional names** and run **Renew and deploy**, or set the API host for that node to a name the certificate already covers.
+
+**"Could not read the ISE deployment"**
+*Every node in the deployment* needs an API account that can read the deployment node list. Grant that access or switch to *Only the nodes listed* and name the nodes.
 
 **Test renewal fails with a DNS or authorization error**
 Use **Test token** under Settings to confirm the token sees the zone for every name. Before contacting Let's Encrypt, Test renewal and Renew and deploy stop with a list of any names whose zone the token cannot see. If the zones are correct, increase **DNS wait** to 60 or 120 seconds.

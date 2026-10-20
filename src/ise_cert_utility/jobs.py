@@ -178,12 +178,17 @@ def _execute(job, log):
 
     client = ise.Client.from_config(cfg, secret)
     if action == "check":
-        leaf, rows = ise.preflight(cfg, client, log, allow_missing=True)
+        leaf, nodes = ise.preflight(cfg, client, log, allow_missing=True)
         if leaf is None:
             return "ISE API access works. No certificate has been issued yet; run Renew and deploy to issue one."
         state = store.read_json(paths.ISE_STATE)
-        return ("ISE already serves the current certificate." if state.get("deployed")
-                else "Ready to deploy. ISE does not serve the current certificate yet.")
+        serving = sum(1 for n in state.get("nodes", []) if n.get("deployed"))
+        if len(nodes) == 1:
+            return ("ISE already serves the current certificate." if state.get("deployed")
+                    else "Ready to deploy. ISE does not serve the current certificate yet.")
+        if serving == len(nodes):
+            return f"All {len(nodes)} ISE nodes serve the current certificate."
+        return f"Ready to deploy. {serving} of {len(nodes)} ISE nodes serve the current certificate."
     if action == "trust-chain":
         ise.preflight(cfg, client, log, import_chain=True)
         return "ISE trusts the full issuing chain."
@@ -199,9 +204,11 @@ def _execute(job, log):
             log("The window closed after renewal; deployment will run in the next window.")
             return "Certificate renewed; deployment deferred to the next window."
     outcome = ise.deploy(cfg, client, log, may_import=in_window)
+    count = len(store.read_json(paths.ISE_STATE).get("nodes", []))
+    on = f" on all {count} ISE nodes" if count > 1 else " on ISE"
     return {
-        "unchanged": "Certificate is current and already deployed.",
-        "deployed": "New certificate deployed and verified on ISE.",
+        "unchanged": f"Certificate is current and already deployed{on}.",
+        "deployed": f"New certificate deployed and verified{on}.",
         "deferred": "Deployment deferred to the next maintenance window.",
     }[outcome]
 

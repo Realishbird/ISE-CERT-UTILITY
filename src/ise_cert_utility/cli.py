@@ -129,6 +129,11 @@ def cmd_status(args):
     print(f"ISE deployed:  {'yes' if ise_state.get('deployed') else 'no'} (checked "
           f"{datetime.datetime.fromtimestamp(ise_state['checked_at']):%Y-%m-%d %H:%M})"
           if ise_state else "ISE deployed:  never checked")
+    nodes = ise_state.get("nodes", [])
+    if len(nodes) > 1:
+        for node in nodes:
+            state = "error" if node.get("error") else "current" if node.get("deployed") else "out of date"
+            print(f"  {node['name']:<24} {state}")
     job = out["job"]
     print(f"Last job:      {job.get('label', '-')} {job.get('state', '')}: {job.get('message', '')}".rstrip())
     if out["missing_settings"]:

@@ -1,8 +1,12 @@
 """Cisco ISE OpenAPI client and deployment workflow.
 
-Only the documented certificate endpoints under /api/v1/certs are used. The
-OpenAPI service must be enabled on the PAN (Administration > System >
-Settings > API Settings).
+Only the documented certificate endpoints under /api/v1/certs, plus the
+deployment node list, are used. The OpenAPI service must be enabled
+(Administration > System > Settings > API Settings).
+
+ISE has no API to import a system certificate onto another node: the import
+lands on the node that receives the request. Each node is therefore reached on
+its own API host, one at a time, with the Primary Admin Node last.
 """
 import base64
 import json
@@ -29,6 +33,7 @@ class ApiRejected(RuntimeError):
 
 class Client:
     def __init__(self, host, port, username, password, ca_file=None, timeout=90):
+        self.host, self.port = host, port
         self.base = f"https://{host}" + ("" if port == 443 else f":{port}")
         self.timeout = timeout
         self.auth = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode()
@@ -41,6 +46,15 @@ class Client:
         from .config import ise_host
         return cls(ise_host(cfg), cfg["ise_port"], cfg["username"], secret.get("ise_password", ""),
                    ca_file=str(paths.ISE_CA))
+
+    def for_host(self, host):
+        """A client for another node in the same deployment, with the same credentials and trust."""
+        if host.lower() == self.host.lower():
+            return self
+        other = object.__new__(Client)
+        other.__dict__.update(self.__dict__, host=host,
+                              base=f"https://{host}" + ("" if self.port == 443 else f":{self.port}"))
+        return other
 
     def request(self, method, path, body=None):
         req = urllib.request.Request(self.base + path, method=method,
@@ -122,17 +136,38 @@ def assigned(cfg, rows, fingerprint):
     return False
 
 
-def record_state(cfg, rows, fingerprint, trusted=None):
+def _node_record(cfg, node, rows, fingerprint):
     admin = [row_fingerprint(r) for r in rows if "Admin" in roles(r)]
-    if trusted is None:
-        trusted = store.read_json(paths.ISE_STATE).get("trusted_fingerprints", [])
-    store.write_json(paths.ISE_STATE, {
-        "checked_at": time.time(),
-        "node": cfg["node"],
+    return {
+        "name": node["name"], "host": node["host"], "roles": node.get("roles", []),
+        "services": node.get("services", []), "checked_at": time.time(), "error": "",
         "deployed": bool(fingerprint) and assigned(cfg, rows, fingerprint),
         "admin_fingerprint": admin[0] if admin else "",
         "eap_fingerprints": eap_fingerprints(rows),
+    }
+
+
+def record_state(nodes, trusted=None, update=False):
+    """Save per-node results. With update, merge into the nodes recorded by the last check."""
+    state = store.read_json(paths.ISE_STATE)
+    if trusted is None:
+        trusted = state.get("trusted_fingerprints", [])
+    known = {n["name"]: n for n in state.get("nodes", [])} if update else {}
+    order = [n["name"] for n in state.get("nodes", [])] if update else []
+    for record in nodes:
+        known[record["name"]] = record
+        if record["name"] not in order:
+            order.append(record["name"])
+    records = [known[name] for name in order]
+    store.write_json(paths.ISE_STATE, {
+        "checked_at": time.time(),
+        "nodes": records,
+        "deployed": bool(records) and all(r["deployed"] for r in records),
         "trusted_fingerprints": sorted(trusted),
+        # Single-node fields kept for status consumers written against 2.0.
+        "node": records[0]["name"] if records else "",
+        "admin_fingerprint": records[0]["admin_fingerprint"] if records else "",
+        "eap_fingerprints": records[0]["eap_fingerprints"] if records else [],
     })
 
 
@@ -146,42 +181,151 @@ def _report_intermediates(cfg, trusted, log):
             "download it from the Certificate page.")
 
 
-def preflight(cfg, client, log, import_chain=False, allow_missing=False):
-    """Validate the local certificate and the ISE side. Read-only unless import_chain.
+# Lower ranks are updated first, so the Primary Admin Node, which runs the API and
+# coordinates the deployment, restarts last and only after every other node is verified.
+def _rank(node):
+    found = set(node.get("roles") or [])
+    if "PrimaryAdmin" in found:
+        return 3
+    if "SecondaryAdmin" in found:
+        return 2
+    if found & {"PrimaryMonitoring", "SecondaryMonitoring"} and "Session" not in (node.get("services") or []):
+        return 1
+    return 0
 
-    With allow_missing and no certificate issued yet, checks API access and the EAP pin and returns (None, rows).
+
+def deployment_nodes(client):
+    """Nodes registered in the deployment, as reported by the PAN."""
+    result = client.request("GET", "/api/v1/deployment/node")
+    rows = result.get("response") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("Unexpected ISE API response: expected a list of deployment nodes.")
+    nodes = []
+    for row in rows:
+        name = row.get("hostname") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not name:
+            continue
+        nodes.append({"name": name, "fqdn": str(row.get("fqdn") or "").lower(),
+                      "roles": [r for r in row.get("roles") or [] if isinstance(r, str)],
+                      "services": [s for s in row.get("services") or [] if isinstance(s, str)],
+                      "status": str(row.get("nodeStatus") or "")})
+    if not nodes:
+        raise RuntimeError("ISE reported no nodes in the deployment.")
+    return nodes
+
+
+def resolve_nodes(cfg, client, log):
+    """Return the nodes to update, in update order, each with the API host used to reach it."""
+    listed = config.node_list(cfg)
+    every = cfg.get("node_mode") == "all"
+    discovered = {}
+    if every or len(listed) > 1:
+        try:
+            discovered = {n["name"].lower(): n for n in deployment_nodes(client)}
+        except (ApiRejected, RuntimeError) as exc:
+            if every:
+                raise RuntimeError(f"Could not read the ISE deployment ({exc}). The API account needs read access "
+                                   "to Administration > Deployment, or list the nodes in Settings instead.") from None
+            log(f"Could not read node roles from ISE ({str(exc)[:80]}); updating nodes in the listed order.")
+    overrides = {n["name"].lower(): n["host"] for n in listed}
+    if every:
+        chosen = [{"name": n["name"], "host": overrides.get(key, "")} for key, n in discovered.items()]
+    else:
+        chosen = listed
+        if discovered:
+            unknown = [n["name"] for n in listed if n["name"].lower() not in discovered]
+            if unknown:
+                raise RuntimeError(f"ISE has no node named {', '.join(unknown)}. Use the names shown under "
+                                   "Administration > System > Deployment.")
+    nodes = []
+    for entry in chosen:
+        info = discovered.get(entry["name"].lower(), {})
+        if info.get("status") and info["status"].lower() != "connected":
+            raise RuntimeError(f"Node {entry['name']} is {info['status']} in the ISE deployment. "
+                               "Resolve that before deploying, or remove it from the node list.")
+        primary = "PrimaryAdmin" in info.get("roles", []) or len(chosen) == 1
+        host = entry["host"] or (config.ise_host(cfg) if primary else "") or info.get("fqdn", "")
+        if not host:
+            raise RuntimeError(f"No API host is known for node {entry['name']}. Add it after the node name "
+                               "in Settings, for example: psn-02 psn-02.example.com")
+        nodes.append({"name": info.get("name", entry["name"]), "host": host,
+                      "roles": info.get("roles", []), "services": info.get("services", [])})
+    nodes.sort(key=_rank)
+    if len(nodes) > 1:
+        log(f"Nodes in update order: {', '.join(n['name'] for n in nodes)}.")
+    return nodes
+
+
+def _connect(client, node):
+    return client.for_host(node["host"])
+
+
+def _check_node(cfg, client, node, names, fingerprint, log):
+    """Read one node's system certificates and apply the per-node safety checks."""
+    node["client"] = _connect(client, node)
+    rows = node["client"].system_certificates(node["name"])
+    node["rows"] = rows
+    log(f"Connected to ISE API; node {node['name']} has {len(rows)} system certificates.")
+    _check_eap_pin(cfg, rows, node["name"])
+    if fingerprint and cfg["deploy_admin"] and not config.covers(names, node["host"]):
+        raise RuntimeError(f"The certificate does not include {node['host']}, so node {node['name']} cannot "
+                           "use it for the Admin role. Add the name under Additional names and renew.")
+    return _node_record(cfg, node, rows, fingerprint)
+
+
+def preflight(cfg, client, log, import_chain=False, allow_missing=False):
+    """Validate the local certificate and every target node. Read-only unless import_chain.
+
+    Returns (leaf, nodes) with nodes in update order; each carries its API client and system certificate rows.
+    With allow_missing and no certificate issued yet, checks API access and the EAP pin and returns (None, nodes).
     """
     names = config.cert_names(cfg)
-    if not certs.info(cfg["domain"])["present"]:
-        if not allow_missing:
-            raise RuntimeError("No certificate has been issued yet. Run Renew and deploy to issue one.")
-        rows = client.system_certificates(cfg["node"])
-        log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
-        _check_eap_pin(cfg, rows)
+    leaf = None
+    fingerprint = ""
+    if certs.info(cfg["domain"])["present"]:
+        leaf, intermediates, root = certs.verify_lineage(cfg["domain"], names=names)
+        fingerprint = certs.fingerprint(leaf)
+        extra = f" (+{len(names) - 1} more {'name' if len(names) == 2 else 'names'})" if len(names) > 1 else ""
+        log(f"Local certificate OK: {cfg['domain']}{extra}, SHA-256 {fingerprint[:16]}..., "
+            f"expires {leaf.not_valid_after_utc:%Y-%m-%d}.")
+        _export_chain(intermediates, root)
+    elif not allow_missing:
+        raise RuntimeError("No certificate has been issued yet. Run Renew and deploy to issue one.")
+
+    nodes = resolve_nodes(cfg, client, log)
+    records, failures = [], []
+    for node in nodes:
+        try:
+            records.append(_check_node(cfg, client, node, names, fingerprint, log))
+        except (ApiRejected, RuntimeError, OSError) as exc:
+            failures.append(f"{node['name']}: {exc}")
+            log(f"Node {node['name']} failed its check: {exc}")
+            records.append({**_node_record(cfg, node, [], ""), "error": str(exc)[:300]})
+    if leaf is None:
         trusted = {row_fingerprint(r) for r in client.trusted_certificates()}
-        _report_intermediates(cfg, trusted, log)
-        record_state(cfg, rows, "", trusted)
-        log("No certificate has been issued yet, so the issuing chain cannot be checked.")
-        return None, rows
-    leaf, intermediates, root = certs.verify_lineage(cfg["domain"], names=names)
-    fingerprint = certs.fingerprint(leaf)
-    extra = f" (+{len(names) - 1} more {'name' if len(names) == 2 else 'names'})" if len(names) > 1 else ""
-    log(f"Local certificate OK: {cfg['domain']}{extra}, SHA-256 {fingerprint[:16]}..., "
-        f"expires {leaf.not_valid_after_utc:%Y-%m-%d}.")
-    _export_chain(intermediates, root)
-
-    rows = client.system_certificates(cfg["node"])
-    log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
-    _check_eap_pin(cfg, rows)
-    trusted = _ensure_chain(client, intermediates + [root], import_chain, log)
+    else:
+        try:
+            trusted = _ensure_chain(client, intermediates + [root], import_chain, log)
+        except Exception:
+            record_state(records)
+            raise
     _report_intermediates(cfg, trusted, log)
-    record_state(cfg, rows, fingerprint, trusted)
-    return leaf, rows
+    record_state(records, trusted)
+    if failures:
+        if len(failures) == 1 and len(nodes) == 1:
+            raise RuntimeError(failures[0].split(": ", 1)[1])
+        raise RuntimeError(f"{len(failures)} of {len(nodes)} nodes failed their checks, so nothing was imported. "
+                           + " ".join(failures))
+    if leaf is None:
+        log("No certificate has been issued yet, so the issuing chain cannot be checked.")
+    return leaf, nodes
 
 
-def _check_eap_pin(cfg, rows):
-    if cfg.get("eap_fingerprint") and eap_fingerprints(rows) != [cfg["eap_fingerprint"]]:
-        raise RuntimeError("The EAP certificate on ISE does not match the pinned fingerprint. "
+def _check_eap_pin(cfg, rows, node):
+    pins = config.eap_pins(cfg)
+    found = eap_fingerprints(rows)
+    if pins and not (len(found) == 1 and found[0] in pins):
+        raise RuntimeError(f"The EAP certificate on node {node} does not match a pinned fingerprint. "
                            "Review the EAP assignment before deploying.")
 
 
@@ -248,23 +392,74 @@ def _encrypted_key(domain, password):
         capture_output=True, check=True, timeout=30).stdout.decode()
 
 
-def deploy(cfg, client, log, may_import=lambda: True, poll_seconds=30):
-    """Import the current certificate for the configured roles and verify the result."""
-    leaf, rows = preflight(cfg, client, log, import_chain=True)
-    fingerprint = certs.fingerprint(leaf)
-    if assigned(cfg, rows, fingerprint):
-        paths.PENDING.unlink(missing_ok=True)
-        log("ISE already serves the current certificate. No import or restart needed.")
-        return "unchanged"
+def _pending():
+    """Unverified imports keyed by node name. 2.0 recorded a single import without a node."""
     pending = store.read_json(paths.PENDING)
-    if pending:
-        raise RuntimeError("A previous import was never verified. Confirm the certificate state in ISE, "
-                           "then clear the pending import from the Operations page.")
-    if not may_import():
-        log("The maintenance window closed before the import step. Deployment deferred.")
-        return "deferred"
+    if pending.get("fingerprint"):
+        return {"": pending}
+    return pending.get("nodes", {})
 
-    eap_before = eap_fingerprints(rows)
+
+def _save_pending(pending):
+    if pending:
+        store.write_json(paths.PENDING, {"nodes": pending})
+    else:
+        paths.PENDING.unlink(missing_ok=True)
+
+
+def deploy(cfg, client, log, may_import=lambda: True, poll_seconds=30):
+    """Import the current certificate on every target node, one node at a time, verifying each."""
+    leaf, nodes = preflight(cfg, client, log, import_chain=True)
+    fingerprint = certs.fingerprint(leaf)
+    pending = _pending()
+    todo = []
+    for node in nodes:
+        if assigned(cfg, node["rows"], fingerprint):
+            pending.pop(node["name"], None)
+        else:
+            todo.append(node)
+    if "" in pending and len(nodes) == 1 and not todo:
+        pending.pop("")
+    _save_pending(pending)
+    if not todo:
+        log("ISE already serves the current certificate"
+            + (f" on all {len(nodes)} nodes." if len(nodes) > 1 else ".") + " No import or restart needed.")
+        return "unchanged"
+    blocked = [n["name"] for n in todo if n["name"] in pending] or (["the configured node"] if "" in pending else [])
+    if blocked:
+        raise RuntimeError(f"A previous import on {', '.join(blocked)} was never verified. Confirm the certificate "
+                           "state in ISE, then clear the pending import from the Operations page.")
+    if len(nodes) > 1:
+        current = len(nodes) - len(todo)
+        log(f"{len(todo)} of {len(nodes)} nodes need the new certificate"
+            + (f"; {current} already serve it." if current else "."))
+
+    done = []
+    for node in todo:
+        if not may_import():
+            log("The maintenance window closed before the next import. "
+                + (f"Updated {', '.join(done)}; the remaining nodes follow in the next window."
+                   if done else "Deployment deferred."))
+            return "deferred"
+        try:
+            _deploy_node(cfg, node, leaf, fingerprint, log, poll_seconds)
+        except Exception as exc:
+            if done:
+                log(f"Stopped after {node['name']} failed. Already updated: {', '.join(done)}. "
+                    "Later nodes were not touched.")
+                if type(exc) in (RuntimeError, ApiRejected):
+                    raise type(exc)(f"{exc} Already updated: {', '.join(done)}.") from None
+            raise
+        done.append(node["name"])
+    if cfg.get("remove_superseded"):
+        for node in nodes:
+            remove_superseded(cfg, node["client"], node["rows"], fingerprint, log, node["name"])
+    return "deployed"
+
+
+def _deploy_node(cfg, node, leaf, fingerprint, log, poll_seconds):
+    client, name = node["client"], node["name"]
+    eap_before = eap_fingerprints(node["rows"])
     key_password = secrets.token_urlsafe(24)
     role_names = " + ".join(sorted(wanted_roles(cfg)))
     body = {
@@ -285,42 +480,48 @@ def deploy(cfg, client, log, may_import=lambda: True, poll_seconds=30):
         body["portalGroupTag"] = cfg["portal_tag"]
         body["allowReplacementOfPortalGroupTag"] = True
 
-    store.write_json(paths.PENDING, {"fingerprint": fingerprint, "started": time.time(), "roles": role_names})
-    restart = " ISE application services will restart." if cfg["deploy_admin"] else ""
-    log(f"Importing certificate for {role_names}.{restart}")
+    # The import API has no node parameter: ISE installs the certificate on the node that receives the request.
+    pending = _pending()
+    pending[name] = {"fingerprint": fingerprint, "started": time.time(), "roles": role_names, "host": node["host"]}
+    _save_pending(pending)
+    restart = f" Application services on {name} will restart." if cfg["deploy_admin"] else ""
+    log(f"Importing certificate on {name} ({node['host']}) for {role_names}.{restart}")
     try:
         client.request("POST", "/api/v1/certs/system-certificate/import", body)
     except ApiRejected:
-        paths.PENDING.unlink(missing_ok=True)
+        pending.pop(name, None)
+        _save_pending(pending)
         raise
     except Exception as exc:  # noqa: BLE001 - a restart can cut off a successful response
-        log(f"The import response was interrupted ({type(exc).__name__}); verifying before any retry.")
+        log(f"The import response from {name} was interrupted ({type(exc).__name__}); verifying before any retry.")
 
-    # Never POST twice: an Admin import restarts ISE and can drop a successful response.
+    # Never POST twice: an Admin import restarts the node and can drop a successful response.
     deadline = time.monotonic() + cfg["verify_minutes"] * 60
     while time.monotonic() < deadline:
         time.sleep(poll_seconds)
         try:
-            rows = client.system_certificates(cfg["node"])
+            rows = client.system_certificates(name)
         except (ApiRejected, RuntimeError, OSError) as exc:
-            log(f"ISE not ready yet ({str(exc)[:80]}); waiting.")
+            log(f"{name} not ready yet ({str(exc)[:80]}); waiting.")
             continue
         if not assigned(cfg, rows, fingerprint):
             continue
         if eap_fingerprints(rows) != eap_before:
-            raise RuntimeError("The new certificate is installed but the EAP assignment changed. Review ISE now.")
-        paths.PENDING.unlink(missing_ok=True)
-        record_state(cfg, rows, fingerprint)
-        log(f"Verified: ISE serves the new certificate for {role_names}; EAP assignment unchanged.")
-        if cfg.get("remove_superseded"):
-            remove_superseded(cfg, client, rows, fingerprint, log)
-        return "deployed"
-    raise RuntimeError(f"The import was not verified within {cfg['verify_minutes']} minutes. "
+            raise RuntimeError(f"The new certificate is installed on {name} but its EAP assignment changed. "
+                               "Review ISE now.")
+        pending = _pending()
+        pending.pop(name, None)
+        _save_pending(pending)
+        node["rows"] = rows
+        record_state([_node_record(cfg, node, rows, fingerprint)], update=True)
+        log(f"Verified: {name} serves the new certificate for {role_names}; EAP assignment unchanged.")
+        return
+    raise RuntimeError(f"The import on {name} was not verified within {cfg['verify_minutes']} minutes. "
                        "The pending marker is kept; check ISE before retrying.")
 
 
-def remove_superseded(cfg, client, rows, fingerprint, log):
-    """Delete unused system certificates this utility imported earlier on this node."""
+def remove_superseded(cfg, client, rows, fingerprint, log, node):
+    """Delete unused system certificates this utility imported earlier on a node."""
     for row in rows:
         name = row.get("friendlyName") or ""
         if not name.startswith((NAME_PREFIX,) + LEGACY_PREFIXES):
@@ -329,7 +530,7 @@ def remove_superseded(cfg, client, rows, fingerprint, log):
             continue
         try:
             client.request("DELETE", "/api/v1/certs/system-certificate/"
-                           f"{urllib.parse.quote(cfg['node'], safe='')}/{urllib.parse.quote(row['id'], safe='')}")
-            log(f"Removed superseded certificate '{name}'.")
+                           f"{urllib.parse.quote(node, safe='')}/{urllib.parse.quote(row['id'], safe='')}")
+            log(f"Removed superseded certificate '{name}' from {node}.")
         except (ApiRejected, RuntimeError) as exc:
-            log(f"Could not remove '{name}': {exc}")
+            log(f"Could not remove '{name}' from {node}: {exc}")

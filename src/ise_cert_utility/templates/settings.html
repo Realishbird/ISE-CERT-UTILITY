@@ -62,7 +62,8 @@
 <form class="settings-section" data-api="/api/settings/ise" id="ise">
   <div class="settings-intro">
     <h2>ISE connection</h2>
-    <p>Uses the ISE OpenAPI certificate endpoints. Enable OpenAPI on the Primary Admin Node and use an account with the ERS Admin or Super Admin role.</p>
+    <p>Uses the ISE OpenAPI certificate endpoints. Enable OpenAPI and use an account with the ERS Admin or Super Admin role.</p>
+    <p>ISE installs an imported certificate only on the node that receives the request, so each node is updated through its own API host, one at a time. The Primary Admin Node is updated last.</p>
     <p>The EAP certificate is never changed. The utility records it before every import and stops if it changes afterwards.</p>
   </div>
   <div class="settings-fields">
@@ -70,17 +71,25 @@
       <label class="field field-grow">
         <span class="field-label">API host</span>
         <input name="ise_host" value="{{ cfg.ise_host }}" placeholder="{{ cfg.domain or 'ise-pan.example.com' }}" spellcheck="false">
-        <span class="field-help">Primary Admin Node. Leave blank to use the certificate hostname.</span>
+        <span class="field-help">Primary Admin Node. Leave blank to use the certificate hostname. Also used to read the deployment and the trusted certificate store.</span>
       </label>
       <label class="field field-narrow">
         <span class="field-label">Port</span>
         <input name="ise_port" type="number" min="1" max="65535" value="{{ cfg.ise_port }}" required>
       </label>
     </div>
+    {% set node_lines = node_list | map(attribute='name') | list %}
+    <fieldset class="field">
+      <legend class="field-label">Nodes to update</legend>
+      <label class="check"><input type="radio" name="node_mode" value="list" {% if cfg.node_mode != 'all' %}checked{% endif %}><span>Only the nodes listed below</span></label>
+      <label class="check"><input type="radio" name="node_mode" value="all" {% if cfg.node_mode == 'all' %}checked{% endif %}><span>Every node in the deployment <span class="muted">(read from ISE on each run)</span></span></label>
+    </fieldset>
     <label class="field">
-      <span class="field-label">Node name</span>
-      <input name="node" value="{{ cfg.node }}" required placeholder="ise-01" spellcheck="false">
-      <span class="field-help">Hostname of the node as listed under Administration &gt; Deployment.</span>
+      <span class="field-label">Nodes</span>
+      <textarea name="nodes" rows="{{ [[node_list | length + 1, 2] | max, 8] | min }}" spellcheck="false" autocomplete="off"
+                placeholder="ise-pan-01&#10;ise-psn-01 ise-psn-01.example.com">{% for n in node_list %}{{ n.name }}{% if n.host %} {{ n.host }}{% endif %}
+{% endfor %}</textarea>
+      <span class="field-help">One per line, as listed under Administration &gt; System &gt; Deployment. Add the node's API host after its name if it is not the FQDN ISE reports. With every node selected, entries here only set API hosts.</span>
     </label>
     <div class="field-row">
       <label class="field">
@@ -102,12 +111,12 @@
       <span class="field-label">Portal group tag</span>
       <input name="portal_tag" value="{{ cfg.portal_tag }}">
     </label>
-    <details class="disclosure" {% if cfg.eap_fingerprint or ise_ca or cfg.remove_superseded %}open{% endif %}>
+    <details class="disclosure" {% if eap_pins or ise_ca or cfg.remove_superseded %}open{% endif %}>
       <summary>Advanced</summary>
       <label class="field">
         <span class="field-label">Trusted CA for the ISE API</span>
         <textarea name="ise_ca_pem" rows="4" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-        <span class="field-help">Needed only while ISE presents a self-signed or private-CA admin certificate. Paste the issuing CA in PEM format.</span>
+        <span class="field-help">Needed only while a node presents a self-signed or private-CA admin certificate. Paste the issuing CA of every such node in PEM format.</span>
       </label>
       {% if ise_ca %}
       <div class="inline-list">
@@ -116,15 +125,15 @@
       </div>
       {% endif %}
       <label class="field">
-        <span class="field-label">Pinned EAP certificate (SHA-256)</span>
-        <input name="eap_fingerprint" value="{{ cfg.eap_fingerprint }}" class="mono" spellcheck="false" placeholder="Optional">
-        <span class="field-help">If set, operations stop unless ISE's EAP certificate has exactly this fingerprint.</span>
+        <span class="field-label">Pinned EAP certificates (SHA-256)</span>
+        <textarea name="eap_fingerprints" rows="{{ [[eap_pins | length, 1] | max, 6] | min }}" class="mono" spellcheck="false" placeholder="Optional">{{ eap_pins | join('\n') }}</textarea>
+        <span class="field-help">One per line. If set, operations stop unless every node's EAP certificate is one of these. List one fingerprint per node when nodes use different EAP certificates.</span>
       </label>
       <label class="field field-narrow-wide">
-        <span class="field-label">Verification timeout</span>
+        <span class="field-label">Verification timeout per node</span>
         <span class="input-suffix"><input name="verify_minutes" type="number" min="5" max="90" value="{{ cfg.verify_minutes }}" required><span>minutes</span></span>
       </label>
-      <label class="check"><input type="checkbox" name="remove_superseded" {% if cfg.remove_superseded %}checked{% endif %}><span>After a verified deployment, delete unused certificates this utility imported earlier</span></label>
+      <label class="check"><input type="checkbox" name="remove_superseded" {% if cfg.remove_superseded %}checked{% endif %}><span>After a verified deployment, delete unused certificates this utility imported earlier on each node</span></label>
     </details>
     <div class="form-actions">
       <button class="button button-primary" type="submit">Save</button>

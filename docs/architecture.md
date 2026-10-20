@@ -72,10 +72,13 @@ A scheduled run executes in the timer's own service, so a console restart does n
 
 | Call | Purpose |
 | --- | --- |
+| `GET /api/v1/deployment/node` | List deployment nodes, their roles and status (PAN; for every-node mode and update order) |
 | `GET /api/v1/certs/system-certificate/{node}` | List system certificates and their roles (paged) |
 | `GET /api/v1/certs/trusted-certificate` | List trusted CAs (paged) |
 | `POST /api/v1/certs/trusted-certificate/import` | Import a missing CA, trusted for ISE authentication only |
-| `POST /api/v1/certs/system-certificate/import` | Import the certificate with an encrypted PKCS#8 key for the Admin and/or Portal role |
+| `POST /api/v1/certs/system-certificate/import` | Import the certificate with an encrypted PKCS#8 key for the Admin and/or Portal role, sent to each node's own API host |
 | `DELETE /api/v1/certs/system-certificate/{node}/{id}` | Remove a superseded certificate (optional) |
+
+System certificate calls go to the node they concern, because the import API installs the certificate on whichever node receives the request. Trusted certificate calls go to the PAN; ISE replicates the trusted store to every node.
 
 Certificates imported by the utility are named `ise-cert-utility <first 16 hex digits of the SHA-256 fingerprint>`; CAs are named `ise-cert-utility CA <...>`. Cleanup only considers certificates with that prefix (or the 1.x `ACME Admin Portal` prefix) that no role uses.

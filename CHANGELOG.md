@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Multi-node deployments: update every node in the ISE deployment (read from ISE on each run) or a listed set, each through its own API host. Nodes are updated one at a time, Policy Service nodes first and the Primary Admin Node last, and each is verified before the next import. Every node must pass its checks before anything is imported; a failure stops the run before later nodes, and the next run resumes where it stopped.
+- Per-node status on the Overview page and in `status`, per-node pending-import markers, and multiple pinned EAP fingerprints (one per node).
+- With the Admin role, deployment stops if the certificate does not cover a node's API host.
 - Additional names: request one certificate that also covers portal FQDNs, other nodes or wildcard names, set under Settings > Certificate and DNS.
 - Test token, Test renewal and Renew and deploy confirm that a Cloudflare zone is visible for every certificate name.
 - Changing the name list triggers a replacement certificate on the next run; the Certificate page shows pending names, and deployment is blocked until the certificate includes them.

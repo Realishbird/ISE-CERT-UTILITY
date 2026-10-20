@@ -11,6 +11,7 @@ ISE Certificate Utility requests certificates from Let's Encrypt using DNS valid
 - **Hands-off renewal.** Renews when the certificate enters a configurable threshold (30 days by default) and deploys only inside a maintenance window you define, with retries and weekday selection.
 - **Safe ISE deployment.** Validates the certificate, chain and private key locally before touching ISE, imports the issuing CA chain into the trusted store, and imports the system certificate exactly once. An interrupted response is verified, never blindly retried.
 - **EAP certificate protection.** Only the Admin and Portal roles are assigned. The EAP certificate is recorded before every import and checked afterwards; an optional fingerprint pin adds a hard stop.
+- **Multi-node deployments.** Update every node in the deployment, or a chosen list, one node at a time with the Primary Admin Node last. Each node is checked before anything is imported and verified before the next one starts.
 - **Multiple names on one certificate.** Add portal FQDNs, other nodes or wildcards as subject alternative names, across any number of Cloudflare zones.
 - **No inbound exposure needed.** DNS-01 validation means neither ISE nor this appliance has to be reachable from the internet.
 - **Operations console.** Live status, operation log, history, certificate details and downloads, encrypted PFX export, and webhook notifications for Slack, Microsoft Teams or any JSON receiver.
@@ -21,7 +22,7 @@ ISE Certificate Utility requests certificates from Let's Encrypt using DNS valid
 | Component | Requirement |
 | --- | --- |
 | Host | Debian 12 or later, or Ubuntu 22.04 or later, with systemd (a Proxmox unprivileged LXC works well) |
-| Cisco ISE | 3.1 or later with the OpenAPI service enabled on the Primary Admin Node |
+| Cisco ISE | 3.1 or later with the OpenAPI service enabled, reachable on every node that receives the certificate |
 | ISE account | ERS Admin or Super Admin role |
 | DNS | The ISE hostname and any additional certificate names must be in Cloudflare-managed zones |
 | Cloudflare | API token with Zone:DNS:Edit and Zone:Zone:Read for those zones |
