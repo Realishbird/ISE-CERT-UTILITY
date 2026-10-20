@@ -178,7 +178,9 @@ def _execute(job, log):
 
     client = ise.Client.from_config(cfg, secret)
     if action == "check":
-        leaf, rows = ise.preflight(cfg, client, log)
+        leaf, rows = ise.preflight(cfg, client, log, allow_missing=True)
+        if leaf is None:
+            return "ISE API access works. No certificate has been issued yet; run Renew and deploy to issue one."
         state = store.read_json(paths.ISE_STATE)
         return ("ISE already serves the current certificate." if state.get("deployed")
                 else "Ready to deploy. ISE does not serve the current certificate yet.")

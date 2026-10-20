@@ -136,6 +136,16 @@ def test_eap_pin_mismatch_stops_preflight(configured):
         ise.preflight(cfg, FakeIse(trusted=chain_fps(configured)), print)
 
 
+def test_check_before_first_issue(configured):
+    cfg = {**configured, "domain": "new.example.net"}
+    leaf, rows = ise.preflight(cfg, FakeIse(), print, allow_missing=True)
+    assert leaf is None and len(rows) == 3
+    with pytest.raises(RuntimeError, match="pinned"):
+        ise.preflight({**cfg, "eap_fingerprint": "c" * 64}, FakeIse(), print, allow_missing=True)
+    with pytest.raises(RuntimeError, match="No certificate"):
+        ise.preflight(cfg, FakeIse(), print, import_chain=True)
+
+
 def test_window_guard_defers_import(configured):
     client = FakeIse(trusted=chain_fps(configured))
     assert ise.deploy(configured, client, print, may_import=lambda: False) == "deferred"

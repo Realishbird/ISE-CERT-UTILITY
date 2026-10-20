@@ -133,9 +133,20 @@ def record_state(cfg, rows, fingerprint):
     })
 
 
-def preflight(cfg, client, log, import_chain=False):
-    """Validate the local certificate and the ISE side. Read-only unless import_chain."""
+def preflight(cfg, client, log, import_chain=False, allow_missing=False):
+    """Validate the local certificate and the ISE side. Read-only unless import_chain.
+
+    With allow_missing and no certificate issued yet, checks API access and the EAP pin and returns (None, rows).
+    """
     names = config.cert_names(cfg)
+    if not certs.info(cfg["domain"])["present"]:
+        if not allow_missing:
+            raise RuntimeError("No certificate has been issued yet. Run Renew and deploy to issue one.")
+        rows = client.system_certificates(cfg["node"])
+        log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
+        _check_eap_pin(cfg, rows)
+        log("No certificate has been issued yet, so the issuing chain cannot be checked.")
+        return None, rows
     leaf, intermediates, root = certs.verify_lineage(cfg["domain"], names=names)
     fingerprint = certs.fingerprint(leaf)
     extra = f" (+{len(names) - 1} more {'name' if len(names) == 2 else 'names'})" if len(names) > 1 else ""
@@ -145,13 +156,16 @@ def preflight(cfg, client, log, import_chain=False):
 
     rows = client.system_certificates(cfg["node"])
     log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
-    eap = eap_fingerprints(rows)
-    if cfg.get("eap_fingerprint") and eap != [cfg["eap_fingerprint"]]:
-        raise RuntimeError("The EAP certificate on ISE does not match the pinned fingerprint. "
-                           "Review the EAP assignment before deploying.")
+    _check_eap_pin(cfg, rows)
     _ensure_chain(client, intermediates + [root], import_chain, log)
     record_state(cfg, rows, fingerprint)
     return leaf, rows
+
+
+def _check_eap_pin(cfg, rows):
+    if cfg.get("eap_fingerprint") and eap_fingerprints(rows) != [cfg["eap_fingerprint"]]:
+        raise RuntimeError("The EAP certificate on ISE does not match the pinned fingerprint. "
+                           "Review the EAP assignment before deploying.")
 
 
 def _export_chain(intermediates, root):
