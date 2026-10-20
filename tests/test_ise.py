@@ -136,6 +136,27 @@ def test_eap_pin_mismatch_stops_preflight(configured):
         ise.preflight(cfg, FakeIse(trusted=chain_fps(configured)), print)
 
 
+def test_security_check_rejection_explains_manual_import(configured):
+    class Filtered(FakeIse):
+        def request(self, method, path, body=None):
+            if path.endswith("/trusted-certificate/import"):
+                raise ise.ApiRejected("ISE rejected the request: HTTP 400: Security Check Failed")
+            return super().request(method, path, body)
+
+    with pytest.raises(ise.ApiRejected, match="Trusted Certificates"):
+        ise.preflight(configured, Filtered(), print, import_chain=True)
+
+
+def test_check_before_first_issue(configured):
+    cfg = {**configured, "domain": "new.example.net"}
+    leaf, rows = ise.preflight(cfg, FakeIse(), print, allow_missing=True)
+    assert leaf is None and len(rows) == 3
+    with pytest.raises(RuntimeError, match="pinned"):
+        ise.preflight({**cfg, "eap_fingerprint": "c" * 64}, FakeIse(), print, allow_missing=True)
+    with pytest.raises(RuntimeError, match="No certificate"):
+        ise.preflight(cfg, FakeIse(), print, import_chain=True)
+
+
 def test_window_guard_defers_import(configured):
     client = FakeIse(trusted=chain_fps(configured))
     assert ise.deploy(configured, client, print, may_import=lambda: False) == "deferred"
@@ -149,3 +170,19 @@ def test_superseded_cleanup_only_removes_own_unused(configured):
     names = {r["friendlyName"] for r in client.system}
     assert "ise-cert-utility 0123456789abcdef" not in names
     assert "Default self-signed" in names and "EAP" in names
+
+
+def test_bundled_intermediates_match_known_fingerprints():
+    rsa = {i["name"]: i for i in certs.letsencrypt_intermediates("rsa")}
+    assert [n for n, i in rsa.items() if i["status"] == "active"] == ["YR1", "YR2"]
+    assert rsa["YR1"]["fingerprint"].startswith("13949634d99cd6fd")
+    assert rsa["YR2"]["fingerprint"].startswith("238b85a0099c65b9")
+    assert len(certs.letsencrypt_intermediates("ecdsa")) == 3
+
+
+def test_check_records_trust_and_warns_about_missing_intermediates(configured):
+    logged = []
+    ise.preflight(configured, FakeIse(trusted=chain_fps(configured)), logged.append)
+    state = store.read_json(paths.ISE_STATE)
+    assert set(chain_fps(configured)) <= set(state["trusted_fingerprints"])
+    assert any("does not trust Let's Encrypt YR1, YR2" in line for line in logged)

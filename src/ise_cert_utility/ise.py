@@ -122,20 +122,47 @@ def assigned(cfg, rows, fingerprint):
     return False
 
 
-def record_state(cfg, rows, fingerprint):
+def record_state(cfg, rows, fingerprint, trusted=None):
     admin = [row_fingerprint(r) for r in rows if "Admin" in roles(r)]
+    if trusted is None:
+        trusted = store.read_json(paths.ISE_STATE).get("trusted_fingerprints", [])
     store.write_json(paths.ISE_STATE, {
         "checked_at": time.time(),
         "node": cfg["node"],
-        "deployed": assigned(cfg, rows, fingerprint),
+        "deployed": bool(fingerprint) and assigned(cfg, rows, fingerprint),
         "admin_fingerprint": admin[0] if admin else "",
         "eap_fingerprints": eap_fingerprints(rows),
+        "trusted_fingerprints": sorted(trusted),
     })
 
 
-def preflight(cfg, client, log, import_chain=False):
-    """Validate the local certificate and the ISE side. Read-only unless import_chain."""
+def _report_intermediates(cfg, trusted, log):
+    family = config.KEY_TYPES[cfg["key_type"]][0]
+    missing = [i["name"] for i in certs.letsencrypt_intermediates(family)
+               if i["status"] == "active" and i["fingerprint"] not in trusted]
+    if missing:
+        log(f"ISE does not trust Let's Encrypt {', '.join(missing)}. A renewal signed by "
+            f"{'it' if len(missing) == 1 else 'one of them'} cannot deploy until it is imported; "
+            "download it from the Certificate page.")
+
+
+def preflight(cfg, client, log, import_chain=False, allow_missing=False):
+    """Validate the local certificate and the ISE side. Read-only unless import_chain.
+
+    With allow_missing and no certificate issued yet, checks API access and the EAP pin and returns (None, rows).
+    """
     names = config.cert_names(cfg)
+    if not certs.info(cfg["domain"])["present"]:
+        if not allow_missing:
+            raise RuntimeError("No certificate has been issued yet. Run Renew and deploy to issue one.")
+        rows = client.system_certificates(cfg["node"])
+        log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
+        _check_eap_pin(cfg, rows)
+        trusted = {row_fingerprint(r) for r in client.trusted_certificates()}
+        _report_intermediates(cfg, trusted, log)
+        record_state(cfg, rows, "", trusted)
+        log("No certificate has been issued yet, so the issuing chain cannot be checked.")
+        return None, rows
     leaf, intermediates, root = certs.verify_lineage(cfg["domain"], names=names)
     fingerprint = certs.fingerprint(leaf)
     extra = f" (+{len(names) - 1} more {'name' if len(names) == 2 else 'names'})" if len(names) > 1 else ""
@@ -145,13 +172,17 @@ def preflight(cfg, client, log, import_chain=False):
 
     rows = client.system_certificates(cfg["node"])
     log(f"Connected to ISE API; node {cfg['node']} has {len(rows)} system certificates.")
-    eap = eap_fingerprints(rows)
-    if cfg.get("eap_fingerprint") and eap != [cfg["eap_fingerprint"]]:
+    _check_eap_pin(cfg, rows)
+    trusted = _ensure_chain(client, intermediates + [root], import_chain, log)
+    _report_intermediates(cfg, trusted, log)
+    record_state(cfg, rows, fingerprint, trusted)
+    return leaf, rows
+
+
+def _check_eap_pin(cfg, rows):
+    if cfg.get("eap_fingerprint") and eap_fingerprints(rows) != [cfg["eap_fingerprint"]]:
         raise RuntimeError("The EAP certificate on ISE does not match the pinned fingerprint. "
                            "Review the EAP assignment before deploying.")
-    _ensure_chain(client, intermediates + [root], import_chain, log)
-    record_state(cfg, rows, fingerprint)
-    return leaf, rows
 
 
 def _export_chain(intermediates, root):
@@ -166,7 +197,7 @@ def _ensure_chain(client, cas, import_chain, log):
     missing = [c for c in reversed(cas) if certs.fingerprint(c) not in known]
     if not missing:
         log("ISE already trusts the issuing CA chain.")
-        return
+        return known
     names = ", ".join(certs.describe(c)["subject"] for c in missing)
     if not import_chain:
         raise RuntimeError(f"ISE does not trust: {names}. Run 'Import CA chain' first.")
@@ -174,22 +205,38 @@ def _ensure_chain(client, cas, import_chain, log):
         if not certs.is_ca(cert):
             raise RuntimeError("Refusing to import a certificate that is not a CA.")
         fp = certs.fingerprint(cert)
-        log(f"Importing trusted CA {certs.describe(cert)['subject']} (SHA-256 {fp[:16]}...).")
-        client.request("POST", "/api/v1/certs/trusted-certificate/import", {
-            "name": f"{NAME_PREFIX}CA {fp[:16]}",
-            "description": "Public CA chain imported by ise-cert-utility",
-            "data": certs.to_pem(cert),
-            "allowBasicConstraintCAFalse": False, "allowOutOfDateCert": False,
-            "allowSHA1Certificates": False, "validateCertificateExtensions": True,
-            "trustForIseAuth": True, "trustForClientAuth": False,
-            "trustForCertificateBasedAdminAuth": False, "trustForCiscoServicesAuth": False,
-        })
+        subject = certs.describe(cert)["subject"]
+        log(f"Importing trusted CA {subject} (SHA-256 {fp[:16]}...).")
+        try:
+            _import_trusted(client, cert, fp)
+        except ApiRejected as exc:
+            if "Security Check Failed" not in str(exc):
+                raise
+            # ISE's request filter flags the apostrophe in "Let's Encrypt"; the admin portal accepts the same file.
+            raise ApiRejected(
+                f"ISE's API refused to import {subject} (Security Check Failed), a known ISE false positive for "
+                "names such as \"Let's Encrypt\". Download it from the Certificate page, import it in "
+                "ISE under Administration > System > Certificates > Trusted Certificates with \"Trust for "
+                "authentication within ISE\", then run Deploy.") from None
     known = {row_fingerprint(r): r for r in client.trusted_certificates()}
     for cert in missing:
         row = known.get(certs.fingerprint(cert))
         if not row or row.get("status", "Enabled") != "Enabled":
             raise RuntimeError("A CA import could not be verified; check the ISE API audit log.")
     log("CA chain imported and verified. No system certificate assignments changed.")
+    return set(known)
+
+
+def _import_trusted(client, cert, fp):
+    client.request("POST", "/api/v1/certs/trusted-certificate/import", {
+        "name": f"{NAME_PREFIX}CA {fp[:16]}",
+        "description": "Public CA chain imported by ise-cert-utility",
+        "data": certs.to_pem(cert),
+        "allowBasicConstraintCAFalse": False, "allowOutOfDateCert": False,
+        "allowSHA1Certificates": False, "validateCertificateExtensions": True,
+        "trustForIseAuth": True, "trustForClientAuth": False,
+        "trustForCertificateBasedAdminAuth": False, "trustForCiscoServicesAuth": False,
+    })
 
 
 def _encrypted_key(domain, password):

@@ -2,6 +2,8 @@
 # Install or upgrade ISE Certificate Utility on Debian 12+ or Ubuntu 22.04+.
 # Run from a checkout of the repository: sudo ./install.sh
 set -euo pipefail
+# The service account must be able to read the virtualenv, whatever umask root's shell uses.
+umask 022
 
 PREFIX=/opt/ise-cert-utility
 SERVICE_USER=ise-cert
@@ -70,9 +72,33 @@ else
     runuser -u "$SERVICE_USER" -- "$PREFIX/venv/bin/ise-cert-utility" init --generate-password "${extra_sans[@]}"
 fi
 
+# 1.x's console listens on the same port and its timer would deploy alongside the new scheduler.
+legacy_units=()
+for unit in ise-cert-web.service ise-cert-web-scheduler.timer ise-cert-sync.timer; do
+    if systemctl is-enabled "$unit" >/dev/null 2>&1 || systemctl is-active "$unit" >/dev/null 2>&1; then
+        legacy_units+=("$unit")
+    fi
+done
+if (( ${#legacy_units[@]} )); then
+    say "Stopping 1.x units: ${legacy_units[*]}"
+    systemctl disable --now "${legacy_units[@]}" >/dev/null 2>&1 || true
+fi
+
 say "Starting services"
 systemctl enable --now ise-cert-utility-web.service ise-cert-utility-scheduler.timer >/dev/null
 systemctl restart ise-cert-utility-web.service
+sleep 3
+if ! systemctl is-active --quiet ise-cert-utility-web.service; then
+    journalctl -u ise-cert-utility-web.service -n 5 --no-pager >&2 || true
+    if [[ $(systemd-detect-virt 2>/dev/null) == lxc ]]; then
+        echo "The console did not start. In an LXC container this usually means nesting is off;" >&2
+        echo "on the Proxmox host run: pct set <id> --features nesting=1 && pct reboot <id>" >&2
+    fi
+    if (( ${#legacy_units[@]} )); then
+        echo "Restore 1.x with: systemctl enable --now ${legacy_units[*]}" >&2
+    fi
+    die "ise-cert-utility-web.service failed to start"
+fi
 
 if systemctl is-enabled certbot.timer >/dev/null 2>&1; then
     say "Note: the distribution certbot.timer is enabled. It does not manage this utility's certificate."
@@ -85,4 +111,8 @@ echo "ISE Certificate Utility is running."
 echo "  Console:      https://$(hostname -f 2>/dev/null || hostname):$port/"
 echo "  Fingerprint:  $fp"
 echo "  Status:       ise-cert-utility status"
+if (( ${#legacy_units[@]} )); then
+    echo "  Roll back:    systemctl disable --now ise-cert-utility-web.service ise-cert-utility-scheduler.timer"
+    echo "                systemctl enable --now ${legacy_units[*]}"
+fi
 echo
