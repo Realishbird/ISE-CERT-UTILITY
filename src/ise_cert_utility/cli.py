@@ -1,5 +1,6 @@
 """Command-line interface: ise-cert-utility <command>."""
 import argparse
+import ast
 import datetime
 import getpass
 import ipaddress
@@ -145,6 +146,24 @@ def cmd_worker(args):
     return 0
 
 
+_LEGACY_CONSTANTS = {"DOMAIN": "domain", "NODE": "node", "TAG": "portal_tag", "EAP": "eap_fingerprint"}
+
+
+def _legacy_constants(script):
+    """Read the module-level string settings from the 1.x sync script without running it."""
+    try:
+        tree = ast.parse(script.read_text())
+    except (OSError, SyntaxError):
+        return {}
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in _LEGACY_CONSTANTS and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            found[_LEGACY_CONSTANTS[node.targets[0].id]] = node.value.value
+    return found
+
+
 def cmd_migrate(args):
     """Import settings from the 1.x layout (/etc/ise-cert-sync) into the current configuration."""
     if os.geteuid() != 0:
@@ -152,6 +171,8 @@ def cmd_migrate(args):
     legacy = store.read_json(Path(args.legacy_dir) / "config.json")
     if not legacy:
         raise SystemExit(f"No legacy configuration found in {args.legacy_dir}.")
+    # 1.x kept the hostname, node, portal tag and EAP pin as constants in its sync script.
+    legacy = {**_legacy_constants(Path(args.legacy_script)), **legacy}
     cfg = {k: legacy[k] for k in ("domain", "node", "username", "portal_tag") if legacy.get(k)}
     if legacy.get("eap_fingerprint"):
         cfg["eap_fingerprint"] = config.fingerprint(legacy["eap_fingerprint"])
@@ -218,6 +239,7 @@ def build_parser():
     p = sub.add_parser("migrate-legacy", help="import settings from a 1.x installation (run as root)")
     p.add_argument("--legacy-dir", default="/etc/ise-cert-sync")
     p.add_argument("--legacy-web-dir", default="/etc/ise-cert-web")
+    p.add_argument("--legacy-script", default="/usr/local/sbin/ise-cert-sync.py")
     p.add_argument("--cloudflare-ini", default="/root/.secrets/certbot/cloudflare.ini")
     p.add_argument("--owner", default=SERVICE_USER)
     p.set_defaults(func=cmd_migrate)

@@ -70,6 +70,18 @@ else
     runuser -u "$SERVICE_USER" -- "$PREFIX/venv/bin/ise-cert-utility" init --generate-password "${extra_sans[@]}"
 fi
 
+# 1.x's console listens on the same port and its timer would deploy alongside the new scheduler.
+legacy_units=()
+for unit in ise-cert-web.service ise-cert-web-scheduler.timer ise-cert-sync.timer; do
+    if systemctl is-enabled "$unit" >/dev/null 2>&1 || systemctl is-active "$unit" >/dev/null 2>&1; then
+        legacy_units+=("$unit")
+    fi
+done
+if (( ${#legacy_units[@]} )); then
+    say "Stopping 1.x units: ${legacy_units[*]}"
+    systemctl disable --now "${legacy_units[@]}" >/dev/null 2>&1 || true
+fi
+
 say "Starting services"
 systemctl enable --now ise-cert-utility-web.service ise-cert-utility-scheduler.timer >/dev/null
 systemctl restart ise-cert-utility-web.service
@@ -85,4 +97,8 @@ echo "ISE Certificate Utility is running."
 echo "  Console:      https://$(hostname -f 2>/dev/null || hostname):$port/"
 echo "  Fingerprint:  $fp"
 echo "  Status:       ise-cert-utility status"
+if (( ${#legacy_units[@]} )); then
+    echo "  Roll back:    systemctl disable --now ise-cert-utility-web.service ise-cert-utility-scheduler.timer"
+    echo "                systemctl enable --now ${legacy_units[*]}"
+fi
 echo

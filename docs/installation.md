@@ -94,7 +94,7 @@ The installer is idempotent. Settings, credentials, certificates and history are
 
 ## Migrating from 1.x
 
-Version 1.x stored settings in `/etc/ise-cert-sync` and ran everything as root. When `install.sh` finds `/etc/ise-cert-sync/config.json` it imports the hostname, node, API credentials, portal tag, EAP pin, schedule and the Cloudflare token automatically. You can also run it manually:
+Version 1.x stored settings in `/etc/ise-cert-sync` and ran everything as root. When `install.sh` finds `/etc/ise-cert-sync/config.json` it imports the hostname, node, API credentials, portal tag, EAP pin, schedule and the Cloudflare token automatically. Settings that 1.x kept as constants in `/usr/local/sbin/ise-cert-sync.py` (hostname, node, portal tag and EAP pin) are read from that script. You can also run it manually:
 
 ```bash
 /opt/ise-cert-utility/venv/bin/ise-cert-utility migrate-legacy
@@ -104,13 +104,8 @@ After migrating:
 
 1. Add the ACME account email under **Settings > Certificate and DNS**.
 2. Run **Renew and deploy**. A fresh certificate is issued into the new Certbot directory; ISE is updated only if it is not already serving an identical certificate.
-3. Disable the old units once the new deployment is verified:
 
-```bash
-systemctl disable --now ise-cert-sync.timer ise-cert-web.service 2>/dev/null || true
-```
-
-The 1.x files are not modified or removed by the migration.
+The installer stops and disables the 1.x units (`ise-cert-web.service`, `ise-cert-web-scheduler.timer`, `ise-cert-sync.timer`), because the 1.x console uses the same port and its timer would deploy alongside the new scheduler. It prints the commands to roll back. The 1.x files are not modified or removed by the migration.
 
 ## Uninstalling
 
