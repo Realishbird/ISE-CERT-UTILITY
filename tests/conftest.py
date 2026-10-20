@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 
-from ise_cert_utility import config, paths  # noqa: E402
+from ise_cert_utility import config, paths, store, web  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +43,9 @@ def _build(subject, issuer, key, signer, *, ca, days=90, san=None, start=None):
             critical=True)
     else:
         builder = builder.add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
-        builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName(san)]), critical=False)
+        sans = [san] if isinstance(san, str) else san
+        builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in sans]),
+                                        critical=False)
         builder = builder.add_extension(x509.KeyUsage(
             digital_signature=True, content_commitment=False, key_encipherment=False, data_encipherment=False,
             key_agreement=False, key_cert_sign=False, crl_sign=False, encipher_only=False, decipher_only=False),
@@ -58,16 +60,14 @@ def pem(cert):
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
-@pytest.fixture
-def issued():
-    """A root -> intermediate -> leaf chain written in Certbot's live/ layout."""
-    domain = "ise.example.net"
+def write_lineage(domain, sans=None):
+    """Write a root -> intermediate -> leaf chain in Certbot's live/ layout."""
     root_key, int_key, leaf_key = (ec.generate_private_key(ec.SECP256R1()) for _ in range(3))
     root = _build("Test Root", "Test Root", root_key, root_key, ca=True, days=3650)
     inter = _build("Test Intermediate", "Test Root", int_key, root_key, ca=True, days=1000)
-    leaf = _build(domain, "Test Intermediate", leaf_key, int_key, ca=False, san=domain)
+    leaf = _build(domain, "Test Intermediate", leaf_key, int_key, ca=False, san=sans or domain)
     live = paths.live_dir(domain)
-    live.mkdir(parents=True)
+    live.mkdir(parents=True, exist_ok=True)
     (live / "cert.pem").write_bytes(pem(leaf))
     (live / "chain.pem").write_bytes(pem(inter))
     (live / "fullchain.pem").write_bytes(pem(leaf) + pem(inter))
@@ -78,8 +78,23 @@ def issued():
 
 
 @pytest.fixture
+def issued():
+    return write_lineage("ise.example.net")
+
+
+@pytest.fixture
 def configured(issued):
     config.save({"domain": issued["domain"], "acme_email": "pki@example.net", "node": "ise-01",
                  "username": "api"})
     config.save_secrets({"ise_password": "ise-secret-password", "cloudflare_token": "cf_token_value_123456789"})
     return {**config.load(), **issued}
+
+
+@pytest.fixture
+def client(configured):
+    store.write_private(paths.WEB_SECRET, "k" * 64)
+    store.write_json(paths.AUTH, {"username": "admin", "password_hash": web.hash_password("correct horse battery"),
+                                  "generation": "g1"})
+    app = web.create_app()
+    app.config["TESTING"] = True
+    return app.test_client()

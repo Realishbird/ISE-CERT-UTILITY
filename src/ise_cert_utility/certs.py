@@ -94,10 +94,10 @@ def system_roots():
     return load_pems(paths.SYSTEM_CA_BUNDLE.read_bytes())
 
 
-def verify_lineage(domain, min_days=7):
+def verify_lineage(domain, min_days=7, names=()):
     """Validate the issued certificate end to end and return (leaf, intermediates, root).
 
-    Checks hostname, validity period, serverAuth usage, the chain to a public
+    Checks hostname, that every configured name is present, validity period, serverAuth usage, the chain to a public
     root in the system trust store, and that the private key matches.
     """
     live = paths.live_dir(domain)
@@ -105,6 +105,10 @@ def verify_lineage(domain, min_days=7):
     intermediates = load_pems((live / "chain.pem").read_bytes())
     if not intermediates:
         raise RuntimeError("chain.pem does not contain any intermediate certificates.")
+    absent = sorted(set(names) - set(describe(leaf)["sans"]))
+    if absent:
+        raise RuntimeError(f"The certificate does not include {', '.join(absent)}. "
+                           "Run Renew and deploy to request one with the configured names.")
     remaining = leaf.not_valid_after_utc - datetime.now(UTC)
     if remaining < timedelta(days=min_days):
         raise RuntimeError(f"The certificate expires in {remaining.days} days; renew it before deploying.")

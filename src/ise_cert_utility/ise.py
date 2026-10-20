@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import certs, paths, store
+from . import certs, config, paths, store
 
 NAME_PREFIX = "ise-cert-utility "
 LEGACY_PREFIXES = ("ACME Admin Portal ",)
@@ -135,9 +135,11 @@ def record_state(cfg, rows, fingerprint):
 
 def preflight(cfg, client, log, import_chain=False):
     """Validate the local certificate and the ISE side. Read-only unless import_chain."""
-    leaf, intermediates, root = certs.verify_lineage(cfg["domain"])
+    names = config.cert_names(cfg)
+    leaf, intermediates, root = certs.verify_lineage(cfg["domain"], names=names)
     fingerprint = certs.fingerprint(leaf)
-    log(f"Local certificate OK: {cfg['domain']}, SHA-256 {fingerprint[:16]}..., "
+    extra = f" (+{len(names) - 1} more {'name' if len(names) == 2 else 'names'})" if len(names) > 1 else ""
+    log(f"Local certificate OK: {cfg['domain']}{extra}, SHA-256 {fingerprint[:16]}..., "
         f"expires {leaf.not_valid_after_utc:%Y-%m-%d}.")
     _export_chain(intermediates, root)
 

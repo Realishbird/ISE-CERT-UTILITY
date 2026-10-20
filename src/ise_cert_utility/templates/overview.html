@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
-{% block lede %}Certificate lifecycle for {{ cfg.node or 'your ISE node' }}{% if cfg.domain %} at {{ cfg.domain }}{% endif %}.{% endblock %}
+{% block lede %}Certificate lifecycle for {{ cfg.node or 'your ISE node' }}{% if cfg.domain %} at {{ cfg.domain }}{% endif %}{% if cfg.domain and cfg.extra_names %}, also covering
+{%- if cfg.extra_names | length <= 3 %} {{ cfg.extra_names | join(', ') }}{% else %} {{ cfg.extra_names[:2] | join(', ') }} and <a href="{{ url_for('certificate') }}">{{ cfg.extra_names | length - 2 }} more names</a>{% endif %}{% endif %}.{% endblock %}
 {% block content %}
 <div data-poll>
 <section class="summary" aria-label="Status summary">

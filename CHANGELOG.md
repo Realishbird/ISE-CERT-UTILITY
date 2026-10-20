@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Additional names: request one certificate that also covers portal FQDNs, other nodes or wildcard names, set under Settings > Certificate and DNS.
+- Test token, Test renewal and Renew and deploy confirm that a Cloudflare zone is visible for every certificate name.
+- Changing the name list triggers a replacement certificate on the next run; the Certificate page shows pending names, and deployment is blocked until the certificate includes them.
+- `status` output and `/api/status` list all certificate names.
+
 ## 2.0.0
 
 A rewrite of the 1.x scripts into a packaged application.

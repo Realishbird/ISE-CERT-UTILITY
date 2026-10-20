@@ -11,6 +11,7 @@ ISE Certificate Utility requests certificates from Let's Encrypt using DNS valid
 - **Hands-off renewal.** Renews when the certificate enters a configurable threshold (30 days by default) and deploys only inside a maintenance window you define, with retries and weekday selection.
 - **Safe ISE deployment.** Validates the certificate, chain and private key locally before touching ISE, imports the issuing CA chain into the trusted store, and imports the system certificate exactly once. An interrupted response is verified, never blindly retried.
 - **EAP certificate protection.** Only the Admin and Portal roles are assigned. The EAP certificate is recorded before every import and checked afterwards; an optional fingerprint pin adds a hard stop.
+- **Multiple names on one certificate.** Add portal FQDNs, other nodes or wildcards as subject alternative names, across any number of Cloudflare zones.
 - **No inbound exposure needed.** DNS-01 validation means neither ISE nor this appliance has to be reachable from the internet.
 - **Operations console.** Live status, operation log, history, certificate details and downloads, encrypted PFX export, and webhook notifications for Slack, Microsoft Teams or any JSON receiver.
 - **Least privilege.** Runs as an unprivileged service account under a hardened systemd sandbox. Credentials are stored in mode 0600 files and never returned to the browser.
@@ -22,8 +23,8 @@ ISE Certificate Utility requests certificates from Let's Encrypt using DNS valid
 | Host | Debian 12 or later, or Ubuntu 22.04 or later, with systemd (a Proxmox unprivileged LXC works well) |
 | Cisco ISE | 3.1 or later with the OpenAPI service enabled on the Primary Admin Node |
 | ISE account | ERS Admin or Super Admin role |
-| DNS | The ISE hostname must be in a Cloudflare-managed zone |
-| Cloudflare | API token with Zone:DNS:Edit and Zone:Zone:Read for that zone |
+| DNS | The ISE hostname and any additional certificate names must be in Cloudflare-managed zones |
+| Cloudflare | API token with Zone:DNS:Edit and Zone:Zone:Read for those zones |
 | Network | Outbound HTTPS to Let's Encrypt, Cloudflare and the ISE PAN |
 
 ## Quick start

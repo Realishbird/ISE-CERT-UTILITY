@@ -164,7 +164,14 @@ def _execute(job, log):
     if not in_window():
         raise RuntimeError("The maintenance window closed before the run started.")
 
+    def check_zones():
+        names = config.cert_names(cfg)
+        zones = acme.check_zones(secret["cloudflare_token"], names)
+        log(f"Cloudflare zones found for {len(names)} {'name' if len(names) == 1 else 'names'}: "
+            + ", ".join(sorted(set(zones.values()))) + ".")
+
     if action == "test-renewal":
+        check_zones()
         log("Requesting a test certificate from the Let's Encrypt staging environment (nothing is saved).")
         log.run(acme.certbot_args(cfg, dry_run=True))
         return "DNS validation through Cloudflare works. A real renewal will succeed."
@@ -183,6 +190,7 @@ def _execute(job, log):
         run, force, reason = acme.renewal_decision(cfg, force=job.get("force"))
         log(reason)
         if run:
+            check_zones()
             log.run(acme.certbot_args(cfg, force=force))
             log("Certificate issued.")
         if job.get("scheduled") and not in_window():
