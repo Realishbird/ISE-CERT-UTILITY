@@ -87,6 +87,18 @@ fi
 say "Starting services"
 systemctl enable --now ise-cert-utility-web.service ise-cert-utility-scheduler.timer >/dev/null
 systemctl restart ise-cert-utility-web.service
+sleep 3
+if ! systemctl is-active --quiet ise-cert-utility-web.service; then
+    journalctl -u ise-cert-utility-web.service -n 5 --no-pager >&2 || true
+    if [[ $(systemd-detect-virt 2>/dev/null) == lxc ]]; then
+        echo "The console did not start. In an LXC container this usually means nesting is off;" >&2
+        echo "on the Proxmox host run: pct set <id> --features nesting=1 && pct reboot <id>" >&2
+    fi
+    if (( ${#legacy_units[@]} )); then
+        echo "Restore 1.x with: systemctl enable --now ${legacy_units[*]}" >&2
+    fi
+    die "ise-cert-utility-web.service failed to start"
+fi
 
 if systemctl is-enabled certbot.timer >/dev/null 2>&1; then
     say "Note: the distribution certbot.timer is enabled. It does not manage this utility's certificate."
