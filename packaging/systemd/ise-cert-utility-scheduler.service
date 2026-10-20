@@ -1,0 +1,39 @@
+[Unit]
+Description=ISE Certificate Utility scheduled renewal check
+Documentation=https://github.com/Realishbird/ISE-CERT-UTILITY
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ise-cert
+Group=ise-cert
+ConfigurationDirectory=ise-cert-utility
+ConfigurationDirectoryMode=0700
+StateDirectory=ise-cert-utility
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/opt/ise-cert-utility/venv/bin/ise-cert-utility scheduled-tick --verbose
+# A deployment can wait up to 90 minutes for ISE to restart and verify.
+TimeoutStartSec=3h
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=

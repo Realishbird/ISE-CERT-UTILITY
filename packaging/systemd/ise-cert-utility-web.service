@@ -1,0 +1,52 @@
+[Unit]
+Description=ISE Certificate Utility web console
+Documentation=https://github.com/Realishbird/ISE-CERT-UTILITY
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ise-cert
+Group=ise-cert
+ConfigurationDirectory=ise-cert-utility
+ConfigurationDirectoryMode=0700
+StateDirectory=ise-cert-utility
+StateDirectoryMode=0700
+UMask=0077
+EnvironmentFile=-/etc/default/ise-cert-utility
+ExecStart=/opt/ise-cert-utility/venv/bin/gunicorn \
+    --bind ${ISE_CERT_UTILITY_BIND} \
+    --workers 2 --threads 4 --timeout 60 \
+    --certfile /etc/ise-cert-utility/tls/console.crt \
+    --keyfile /etc/ise-cert-utility/tls/console.key \
+    --access-logfile - --forwarded-allow-ips "" \
+    "ise_cert_utility.web:create_app()"
+Environment=ISE_CERT_UTILITY_BIND=0.0.0.0:8443
+Restart=on-failure
+RestartSec=5
+
+# Hardening. Background workers inherit these restrictions.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+<dialog id="confirm-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <h2 id="confirm-title">Confirm</h2>
+    <p id="confirm-text" class="muted"></p>
+    <label class="check" id="confirm-force-row" hidden>
+      <input type="checkbox" id="confirm-force">
+      <span>Request a new certificate even if the current one is not due for renewal</span>
+    </label>
+    <div class="dialog-actions">
+      <button class="button" value="cancel" type="submit">Cancel</button>
+      <button class="button button-primary" value="confirm" type="submit" id="confirm-accept">Continue</button>
+    </div>
+  </form>
+</dialog>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} · ISE Certificate Utility</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="auth">
+<main class="auth-panel">
+  <h1>{{ title }}</h1>
+  <p class="muted">{{ detail }}</p>
+  <a class="button" href="{{ url_for('overview') }}">Return to the console</a>
+</main>
+</body>
+</html>

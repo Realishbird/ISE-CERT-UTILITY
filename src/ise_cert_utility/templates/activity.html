@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Activity{% endblock %}
+{% block heading %}Activity{% endblock %}
+{% block lede %}Live output of the current operation and the history of past runs.{% endblock %}
+{% block content %}
+<div data-poll>
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h2 data-bind="job-title">Current operation</h2>
+      <p class="panel-sub" data-bind="job-detail">No operation has run yet.</p>
+    </div>
+    <span class="status" data-bind="job-state">Idle</span>
+  </div>
+  <pre class="log" data-bind="log" tabindex="0" aria-label="Operation log">No output yet.</pre>
+</section>
+
+<div class="grid-2">
+  {% include "_operations.html" %}
+  <section class="panel">
+    <div class="panel-header"><h2>History</h2></div>
+    <table class="table">
+      <thead><tr><th>Operation</th><th>Result</th><th>Started</th><th>Duration</th></tr></thead>
+      <tbody>
+      {% for item in history %}
+        <tr>
+          <td>{{ item.label or item.action }}{% if item.scheduled %} <span class="tag">Scheduled</span>{% endif %}
+            {% if item.message %}<div class="cell-sub">{{ item.message }}</div>{% endif %}</td>
+          <td><span class="status status-{{ item.state }}">{{ item.state | capitalize }}</span></td>
+          <td class="nowrap">{{ item.started | when }}</td>
+          <td class="nowrap">{% if item.finished and item.started %}{{ ((item.finished - item.started) // 60) | int }}m {{ ((item.finished - item.started) % 60) | int }}s{% else %}–{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="empty">No operations yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+</div>
+{% endblock %}
