@@ -2,6 +2,8 @@
 # Install or upgrade ISE Certificate Utility on Debian 12+ or Ubuntu 22.04+.
 # Run from a checkout of the repository: sudo ./install.sh
 set -euo pipefail
+# The service account must be able to read the virtualenv, whatever umask root's shell uses.
+umask 022
 
 PREFIX=/opt/ise-cert-utility
 SERVICE_USER=ise-cert
